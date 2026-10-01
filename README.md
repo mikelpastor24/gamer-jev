@@ -1,14 +1,15 @@
 # Gamer Jev
 
 A public, game-agnostic project where [TypeSafe AI's Jev](https://typesafe.ai/)
-selects controller actions from a user's objectives and visual observations
+selects controller actions from a user's objectives, structured game state, and optional visual observations
 of an emulated game. Inspired by
 [jev-pokemon](https://github.com/christianmat/jev-pokemon).
 
 Implemented: Game Boy emulation, stereo audio, a local viewer, checkpoints,
-and a bounded agent loop with visual perception and Jev decisions. Live mode
-uses one Vercel AI Gateway key for both models. Manual and mock modes need no
-credentials. Gameplay competence still needs validation with real games.
+and a bounded agent loop with structured game state, Jev decisions, and optional
+visual perception. Game readers use interchangeable strategies selected by
+console and ROM hash. Live mode uses one Vercel AI Gateway key; manual and mock
+modes need no credentials. Gameplay competence still needs validation with real games.
 
 ## Requirements
 
@@ -52,26 +53,57 @@ copy `.env.example` to `.env`, and replace the key placeholder:
 AI_GATEWAY_API_KEY=your-vercel-ai-gateway-key
 ```
 
-Then supply a ROM and a goal:
+Choose how to play:
+
+| Mode | Configuration | Model calls |
+| --- | --- | --- |
+| Manual | Omit `--agent`; optionally select `--profile` for state inspection | None |
+| Jev with game state | `--agent gateway --observation state` and a compatible reader | Jev only |
+| Jev with vision | `--agent gateway --observation vision`; a reader is optional | Jev and vision |
+
+For a ROM without a reader, start with vision:
 
 ```sh
-npm start -- --rom "roms/my-game.gb" --agent gateway --goal "Start the game and complete the first level"
+npm start -- --rom "roms/my-game.gb" --agent gateway --observation vision --goal "Start the game and complete the first level"
 ```
 
 Open the printed viewer URL to watch the session. **Pause** cancels pending
 requests and discards their decisions. **Resume** requests a fresh observation.
-The panel shows the objective, visual description, chosen input, confidence
+The panel shows the objective, observation, chosen input, confidence
 when reported, decision count, request count, and stop reason. Manual button
 input is disabled during agent sessions. Checkpoints and screenshots still work.
 
-No game-specific memory map or profile is required. The default vision model,
+The default observation mode is `vision`, preserving existing commands. In that
+mode, no game-specific reader is required. The default vision model,
 `google/gemini-2.5-flash`, describes the current screenshot and compares it with
-the previous observation. Jev, `typesafe-ai/jev`, receives that description,
-objectives, recent action results, repeated-screen evidence, and an explicit
-controller action set. Jev selects the action; the vision model only observes.
-Both use the same Gateway key and account credits. Optional `.env` settings
+the previous observation. Jev, `typesafe-ai/jev`, receives structured game state,
+any visual description, objectives, recent action results, repeated-screen
+evidence, and the current available actions. A compatible reader supplies
+semantic state and filters those actions; otherwise vision uses generic
+controller actions and explicitly labeled emulator metadata. Jev selects the
+action; vision only observes and cannot overwrite memory-derived state or actions.
+When enabled, both models use the same Gateway key and account credits. Optional `.env` settings
 `VISION_MODEL` and `JEV_MODEL` change the configured Gateway model IDs; the
 vision model must support image input and Jev must remain a TypeSafe model.
+`VISION_MODEL` is not validated or used in state-only mode.
+
+The original demo has an automatically selected memory reader. To use only Jev:
+
+```sh
+npm start -- --demo --agent gateway --observation state --goal "Increase scrollX"
+npm start -- --rom "roms/my-game.gb" --profile "my-reader" --agent gateway --observation state --goal "Complete the first level"
+```
+
+State-only mode requires a compatible reader. Arbitrary games have different
+memory layouts; emulator metadata alone cannot reveal menus, health, player
+positions, or valid gameplay choices. Readers follow the `GameReader` Strategy
+contract and registry. See [adding a game reader](docs/game-readers.md) and the
+working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
+[JSON profile](examples/demo-profile.json) without implementing another class.
+
+Open **Local game state** in manual or agent mode to inspect live fields,
+descriptions, and available actions. `GET /api/game-state` exposes the same
+read-only snapshot. This makes no model calls and does not advance the emulator.
 
 Jev accepts text-based state, so screenshots go to a separate visual model.
 The integration uses Gateway's documented [evaluation HTTP API](https://vercel.com/docs/ai-gateway/modalities/evaluation)
@@ -80,8 +112,9 @@ Native Node `fetch` avoids an additional SDK dependency; Apache-2.0 SDK code
 would be incompatible with the emulator's GPL-2.0-only license.
 
 The emulator freezes while models respond, keeping each decision tied to the
-observed screen. Actions hold one button or a direction with A/B for a bounded
-duration, then release for four frames; `wait` advances without input. Model
+observed screen. Generic actions hold one button or a direction with A/B for a bounded
+duration, then release for four frames; readers can supply other valid button combinations.
+The `wait` action advances without input. Model
 latency creates gaps in gameplay and audio. This first loop is best suited to
 games that tolerate discrete control rather than fast reactions.
 
@@ -92,8 +125,11 @@ npm run agent:demo
 npm run agent:demo -- --headless --decisions 10 --screenshot "output/agent-demo.png"
 ```
 
-The mock cycles through predetermined inputs. It does not interpret the game
-or demonstrate Jev's gameplay ability.
+The mock decision provider cycles through predetermined inputs. The demo still
+uses its real local memory reader and state-dependent action availability. Mock
+decisions do not demonstrate Jev's gameplay ability. Add `--observation vision`
+to the demo command to test composition with a mock visual provider, still
+without keys or API calls.
 
 ### Objectives and limits
 
@@ -109,7 +145,7 @@ npm start -- --rom "roms/my-game.gb" --agent gateway --goal "Reach gameplay" --h
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--decisions` | 100 | Maximum accepted Jev choices |
-| `--requests` | 300 | Combined vision/Jev HTTP attempts, including failures, retries, and cancellations |
+| `--requests` | 300 | Jev and optional vision HTTP attempts, including failures, retries, and cancellations |
 | `--max-seconds` | 300 | Wall-clock session limit, including viewer pauses |
 | `--action-frames` | 24 | Input duration; held inputs also get 4 release frames |
 | `--frames` | 1,000,000 in agent mode | Additional headless frame limit |
@@ -132,8 +168,9 @@ Each agent run writes a local JSONL record under `logs/sessions/`: objectives,
 candidate actions, observations, model choices and usage, actual frame ranges,
 interrupted actions, and stop reasons. API keys and provider error bodies are
 excluded. Records may contain game text and user objectives; keep them local.
-Live mode sends screenshots to the vision provider and structured observations
-to Jev through Gateway. ROM binaries and checkpoints stay on your machine.
+Live state-only mode sends structured state to Jev. Vision mode additionally
+sends screenshots to the visual provider. ROM binaries and checkpoints stay on
+your machine. Reader-specific memory meanings are not guessed for unsupported ROMs.
 
 ## Manual viewer
 
@@ -254,10 +291,14 @@ Only the Game Boy adapter is currently registered. Browser keyboard shortcuts
 are provided for the Game Boy input names; other names still get on-screen
 buttons and can add appropriate keyboard bindings.
 
-Observation and decision providers implement the contracts in
-`src/core/agent.ts`. An optional game profile can replace or enrich visual
-observations with memory-derived state without changing the shared session
-runner. Keep game names, memory addresses, and progress rules outside the core.
+Observation, vision, and decision providers implement separate contracts in
+`src/core/agent.ts`. `src/jev/` owns decision evaluation, `src/vision/` owns image
+description, and `src/observation/` composes local state with optional visual
+evidence. Shared HTTP transport and request limits live in `src/providers/`.
+Game strategies implement `src/core/game-reader.ts` and register under
+`src/profiles/`. Keep game names, memory addresses, and progress rules outside
+the core. See [the reader extension guide](docs/game-readers.md) for the contract,
+registration, JSON schema, validation, and examples.
 
 ## Compatibility and current limits
 
@@ -273,6 +314,9 @@ runner. Keep game names, memory addresses, and progress rules outside the core.
   HTTP responses. Live credentials and success in commercial games have not
   been validated. Visual interpretations may be wrong, and compatibility does
   not guarantee objective completion or effective play in every game.
+- Only the original demo currently has a shipped, verified memory reader.
+  Its new work-RAM readiness flag changes the ROM hash; older demo checkpoints
+  must be replaced. Reader compatibility is checked against exact ROM hashes.
 
 ## Development
 
@@ -286,7 +330,9 @@ node dist/cli.js --demo --headless --frames 120
 
 Tests execute the real emulator against the original synthetic ROM, validate
 action safety and save-state continuation, and exercise the local HTTP viewer,
-agent lifecycle, request budgets, and Gateway request/response validation.
+agent lifecycle, request budgets, and Gateway request/response validation,
+memory decoding, reader compatibility, state-dependent actions, and independent
+state-only and vision-assisted observation paths.
 They require no commercial ROM, network API, credentials, or paid model calls.
 The compiled CLI reads the static viewer from `web/`; keep that directory
 alongside `dist/` when moving a build.

@@ -56,6 +56,10 @@ export interface MemoryReader {
   readMemory(address: number, length: number): Uint8Array;
 }
 
+export function hasMemory(emulator: Emulator): emulator is Emulator & MemoryReader {
+  return emulator.descriptor.capabilities.readMemory && "readMemory" in emulator && typeof emulator.readMemory === "function";
+}
+
 export interface AudioChunk {
   readonly sampleRate: number;
   readonly channels: 1 | 2;

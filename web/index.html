@@ -46,10 +46,15 @@
               <div><dt>Selected input</dt><dd id="agent-action">Waiting</dd></div>
               <div><dt>Confidence</dt><dd id="agent-confidence">Unavailable</dd></div>
             </dl>
-            <details><summary>Visual observation</summary><p id="agent-observation"></p></details>
+            <details><summary>Agent observation</summary><p id="agent-observation"></p></details>
             <p id="agent-stop" class="description" role="status"></p>
             <hr>
           </section>
+          <details id="game-state-panel">
+            <summary>Local game state</summary>
+            <p id="game-reader" class="description"></p>
+            <pre id="game-state">Open to inspect state and available actions.</pre>
+          </details>
           <div class="audio-controls">
             <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
             <label for="volume">Volume <output id="volume-value">35%</output></label>

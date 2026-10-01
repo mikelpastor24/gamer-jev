@@ -45,5 +45,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 #agent-panel details { font-size: 12px; line-height: 1.7; }
 #agent-panel summary { cursor: pointer; color: var(--green); }
 #agent-observation { white-space: pre-wrap; max-height: 220px; overflow: auto; }
+#game-state-panel { font-size: 12px; line-height: 1.7; margin: 20px 0; }
+#game-state-panel summary { cursor: pointer; color: var(--green); }
+#game-state { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; font-size: 11px; }
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 26px 0 0; color: var(--muted); font-size: 11px; }
 @media (max-width: 720px) { main { padding: 24px 18px; } .workspace { grid-template-columns: 1fr; } .brand span { display: none; } .console { padding: 18px; } .screen-surround { padding: 14px; } .intro { margin-top: 30px; } }

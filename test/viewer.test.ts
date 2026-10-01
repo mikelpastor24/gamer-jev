@@ -7,9 +7,11 @@ import { PNG } from "pngjs";
 import { createDemoRom } from "../src/demo/rom.js";
 import { GameBoyEmulator } from "../src/emulator/game-boy/game-boy-emulator.js";
 import { startViewer } from "../src/server/viewer.js";
-import { createMockProviders } from "../src/jev/mock.js";
-import { RequestBudget } from "../src/jev/requests.js";
+import { createMockProviders } from "./fixtures/agent-providers.js";
+import { RequestBudget } from "../src/providers/requests.js";
 import { AgentSession } from "../src/runner/agent-session.js";
+import { bindGameReader } from "../src/profiles/registry.js";
+import { DemoGameReader } from "../src/profiles/demo.js";
 
 test("the local viewer exposes frames, controls, screenshots, and compatible checkpoints", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamer-jev-test-"));
@@ -72,6 +74,36 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     emulator.dispose();
     assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("manual play exposes local memory state and available actions without a decision provider", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamer-jev-reader-test-"));
+  const emulator = new GameBoyEmulator(createDemoRom());
+  const gameState = bindGameReader(new DemoGameReader(), emulator, 24);
+  const viewer = await startViewer(emulator, { port: 0, speed: 1, paused: true, checkpointPath: join(directory, "checkpoint.json"), gameState });
+  const post = (path: string) => fetch(`${viewer.url}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json", Origin: viewer.url }, body: "{}",
+  });
+  const snapshot = async () => (await fetch(`${viewer.url}/api/game-state`)).json();
+  try {
+    const initial = await snapshot();
+    assert.equal(initial.state.values.phase, "initializing");
+    assert.deepEqual(initial.actions.map((action: { id: string }) => action.id), ["wait", "stop"]);
+    assert.equal(emulator.frameNumber, 0);
+    emulator.advance({ buttons: [], frames: 12 });
+    emulator.advance({ buttons: ["RIGHT"], frames: 4 });
+    const current = await snapshot();
+    assert.equal(current.state.values.phase, "running"); assert.ok(current.state.values.scrollX > 0);
+    assert.equal(current.state.frame, 16); assert.equal(emulator.frameNumber, 16);
+    await post("/api/save"); await post("/api/reset");
+    assert.equal((await snapshot()).state.values.phase, "initializing");
+    await post("/api/load"); assert.deepEqual((await snapshot()).state, current.state);
+    const status = await (await fetch(`${viewer.url}/api/status`)).json();
+    assert.equal(status.agent, null); assert.equal(status.gameReader, "demo");
+  } finally {
+    await viewer.close(); emulator.dispose();
+    assert.equal(dirname(resolve(directory)), resolve(tmpdir())); await rm(directory, { recursive: true, force: true });
   }
 });
 

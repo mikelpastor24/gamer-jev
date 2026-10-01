@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "demo-json",
+  "name": "Declarative scrolling checkerboard demo",
+  "consoleId": "game-boy",
+  "romSha256": ["272c72c19789011e10bbfa33e804dd8ec268c760d3ff3dad77dd2cae99b9102e"],
+  "fields": [
+    { "name": "scrollX", "description": "Horizontal checkerboard offset, wrapping modulo 256.", "address": "0xFF43", "type": "u8" },
+    { "name": "scrollY", "description": "Vertical checkerboard offset, wrapping modulo 256.", "address": "0xFF42", "type": "u8" },
+    { "name": "lcdEnabled", "description": "Whether the LCD is enabled.", "address": "0xFF40", "type": "flag", "mask": "0x80" },
+    { "name": "phase", "description": "The original ROM writes its work-RAM readiness flag after initialization.", "address": "0xC000", "type": "enum", "labels": { "0": "initializing", "1": "running" } }
+  ],
+  "actions": [
+    { "id": "press_right", "description": "Increase scrollX by holding RIGHT, then release. Offset wraps modulo 256.", "buttons": ["RIGHT"], "when": [{ "field": "lcdEnabled", "op": "eq", "value": true }, { "field": "phase", "op": "eq", "value": "running" }] },
+    { "id": "press_left", "description": "Decrease scrollX by holding LEFT, then release. Offset wraps modulo 256.", "buttons": ["LEFT"], "when": [{ "field": "lcdEnabled", "op": "eq", "value": true }, { "field": "phase", "op": "eq", "value": "running" }] },
+    { "id": "press_down", "description": "Increase scrollY by holding DOWN, then release. Offset wraps modulo 256.", "buttons": ["DOWN"], "when": [{ "field": "lcdEnabled", "op": "eq", "value": true }, { "field": "phase", "op": "eq", "value": "running" }] },
+    { "id": "press_up", "description": "Decrease scrollY by holding UP, then release. Offset wraps modulo 256.", "buttons": ["UP"], "when": [{ "field": "lcdEnabled", "op": "eq", "value": true }, { "field": "phase", "op": "eq", "value": "running" }] }
+  ]
+}

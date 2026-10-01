@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createGatewayProviders } from "../src/jev/gateway.js";
-import { RequestBudget } from "../src/jev/requests.js";
+import { createGatewayDecisionProvider } from "../src/jev/gateway.js";
+import { createGatewayVisionProvider } from "../src/vision/gateway.js";
+import { RequestBudget } from "../src/providers/requests.js";
 import { controllerActions } from "../src/runner/agent-session.js";
+
+function createGatewayProviders(options: { apiKey: string; visionModel: string; jevModel: string; budget: RequestBudget; fetch?: typeof globalThis.fetch }) {
+  return { decider: createGatewayDecisionProvider({ ...options, model: options.jevModel }),
+    observer: createGatewayVisionProvider({ ...options, model: options.visionModel }) };
+}
 
 test("Gateway HTTP sends vision images and typed Jev choices using the same server-side key", async () => {
   const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];

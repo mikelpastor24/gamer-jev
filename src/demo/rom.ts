@@ -1,6 +1,8 @@
 /** Original, synthetic ROM: a scrolling checkerboard with a 440 Hz test tone.
  * No boot logo or third-party game assets are included. The emulator skips boot.
  */
+export const DEMO_READY_ADDRESS = 0xc000;
+
 export function createDemoRom(): Uint8Array {
   const rom = new Uint8Array(0x8000);
   rom.set([0xc3, 0x50, 0x01], 0x100); // JP $0150
@@ -15,6 +17,7 @@ export function createDemoRom(): Uint8Array {
   const jump = (opcode: number, target: number) => emit(opcode, target & 0xff, target >> 8);
 
   emit(0xf3, 0x31, 0xfe, 0xff); // DI; LD SP,$FFFE
+  emit(0xaf, 0xea, DEMO_READY_ADDRESS & 0xff, DEMO_READY_ADDRESS >> 8); // Clear the demo's readiness flag in work RAM.
   // Reset the APU and play a steady square wave on pulse channel 1, in stereo.
   for (const [register, value] of [[0x26, 0x00], [0x26, 0x80], [0x24, 0x77], [0x25, 0x11],
     [0x10, 0x00], [0x11, 0x80], [0x12, 0xf0], [0x13, 0xd6], [0x14, 0x86]]) {
@@ -35,6 +38,7 @@ export function createDemoRom(): Uint8Array {
   emit(0xaf, 0xe0, 0x42, 0xe0, 0x43); // Scroll origin
   emit(0x3e, 0xe4, 0xe0, 0x47); // Grayscale palette
   emit(0x3e, 0x91, 0xe0, 0x40); // Enable LCD and background
+  emit(0x3e, 0x01, 0xea, DEMO_READY_ADDRESS & 0xff, DEMO_READY_ADDRESS >> 8); // Mark gameplay ready.
 
   const loop = address();
   emit(0xf0, 0x44, 0xfe, 0x90);

@@ -27,11 +27,15 @@ pinned `serverboy` 0.0.7 backend. It includes a console registry, Game Boy adapt
 bounded headless runner, local manual viewer with stereo audio, PNG captures,
 and save states. Audio is an optional `AudioSource` capability. Keep its queues
 bounded and clear pending playback on pause, reset, restore, and tab hiding.
-The agent loop uses Vercel AI Gateway for both Gemini visual observations and
-Jev typed action choices, sharing one server-side API key. A deterministic mock
+Jev decisions in `src/jev/` are independent of optional vision in `src/vision/`.
+Both use a neutral Gateway transport and budget in `src/providers/`. Observation
+composition lives in `src/observation/`. A deterministic mock
 works offline. Objectives, bounded sessions, recent history, JSONL records,
-viewer inspection, and headless agent execution are implemented. Game-specific
-profiles and verified progress checks remain future work.
+viewer inspection, and headless agent execution are implemented. Game readers
+use the Strategy contract in `src/core/game-reader.ts`, a ROM-aware registry,
+and TypeScript or declarative JSON implementations in `src/profiles/`. The
+original demo has a verified memory reader. Commercial-game readers and
+verified progress checks remain future work.
 
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
@@ -55,9 +59,9 @@ and Linux. Keep these commands and the README aligned with actual behavior.
 ## Architectural Boundaries
 
 Use explicit interfaces between the following components. The emulation,
-configuration, observation contracts, Jev adapters, and runners below exist;
-game profiles are planned. Visual perception lives in the Gateway provider;
-the local viewer lives in `src/server/` and `web/`.
+configuration, observation contracts, game-reader strategies, Jev adapters, and
+runners below exist. Visual perception lives in `src/vision/`; HTTP transport
+and budgets live in `src/providers/`. The viewer lives in `src/server/` and `web/`.
 
 | Component | Suggested location | Responsibility |
 | --- | --- | --- |
@@ -76,6 +80,15 @@ the local viewer lives in `src/server/` and `web/`.
   Validate console extensions against the common contract and their own fixtures.
 - Game profiles may provide richer observations and actions, but the core must
   not require a particular game's disassembly, symbols, or memory layout.
+- Game readers implement `GameReader` and are created per session by the
+  registry. Match the console and exact ROM hash; do not infer compatibility
+  from filenames or game titles. Reads must not mutate or advance the emulator.
+  Invalidate optional reader caches on reset and restore.
+- Readers supply semantic state and current action availability. Vision adds
+  evidence and cannot overwrite memory-derived fields or choose actions.
+  Validate the current action set before asking Jev and execute only a member
+  of that set. Unsupported memory-only ROMs need a reader; emulator metadata
+  alone is not a semantic observation of arbitrary games.
 - Keep emulator frame advancement separate from model request timing. Bound each
   action by a configurable number of frames and reliably release held buttons.
 - Treat game mechanics as optional capabilities exposed by a profile. The generic

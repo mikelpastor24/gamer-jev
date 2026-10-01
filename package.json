@@ -2,7 +2,7 @@
   "name": "gamer-jev",
   "version": "0.1.0",
   "private": true,
-  "description": "Game-agnostic emulated gameplay with TypeSafe AI's Jev and visual observations.",
+  "description": "Game-agnostic emulated gameplay with TypeSafe AI's Jev, game-reader strategies, and optional vision.",
   "type": "module",
   "license": "GPL-2.0-only",
   "engines": {
@@ -11,7 +11,7 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "demo": "tsx src/cli.ts --demo",
-    "agent:demo": "tsx src/cli.ts --demo --agent mock --goal \"Exercise the controller and inspect the screen\"",
+    "agent:demo": "tsx src/cli.ts --demo --agent mock --observation state --goal \"Exercise the controller and inspect the game state\"",
     "headless": "tsx src/cli.ts --headless",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",

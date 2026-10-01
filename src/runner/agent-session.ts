@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import type { ActionRecord, AgentAction, Decision, DecisionProvider, Objectives, ObservationProvider } from "../core/agent.js";
+import type { ActionRecord, AgentAction, Decision, DecisionProvider, GameState, Objectives, ObservationProvider } from "../core/agent.js";
 import type { Emulator, Frame } from "../core/emulator.js";
-import { validateAction } from "../core/emulator.js";
-import { AgentFailure, RequestBudget } from "../jev/requests.js";
+import { controllerActions, validateAgentActions } from "../core/actions.js";
+import { validateGameState } from "../core/game-state.js";
+import { AgentFailure, RequestBudget } from "../providers/requests.js";
+export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
   readonly mode: "gateway" | "mock";
@@ -16,24 +18,6 @@ export interface AgentSessionOptions {
   readonly record?: (event: unknown) => void;
 }
 
-export function controllerActions(buttons: readonly string[], frames: number): readonly AgentAction[] {
-  const actions: AgentAction[] = buttons.map((button, index) => ({
-    id: /^[A-Z][A-Z0-9_]*$/.test(button) ? `press_${button.toLowerCase()}` : `press_${button.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_${index}`,
-    description: `Hold ${button} for ${frames} frames, then release for 4 frames.`, buttons: [button], frames, stop: false,
-  }));
-  for (const direction of ["UP", "DOWN", "LEFT", "RIGHT"]) for (const button of ["A", "B"]) {
-    if (buttons.includes(direction) && buttons.includes(button)) actions.push({
-      id: `press_${direction.toLowerCase()}_${button.toLowerCase()}`,
-      description: `Hold ${direction} and ${button} together for ${frames} frames, then release for 4 frames.`,
-      buttons: [direction, button], frames, stop: false,
-    });
-  }
-  actions.push({ id: "wait", description: `Wait ${frames} frames without pressing buttons.`, buttons: [], frames, stop: false },
-    { id: "stop", description: "Stop this session. Completion remains unverified without a progress checker.", buttons: [], frames: 0, stop: true });
-  if (actions.length > 255 || new Set(actions.map((action) => action.id)).size !== actions.length) throw new Error("The controller action set must have at most 255 unique identifiers.");
-  for (const action of actions) if (!action.stop) validateAction(action, buttons);
-  return actions;
-}
 
 export class AgentSession {
   private state: "idle" | "paused" | "observing" | "thinking" | "acting" | "stopped" | "error" = "idle";
@@ -46,6 +30,7 @@ export class AgentSession {
   private screenHash: string | undefined;
   private unchangedScreens = 0;
   private observation = "";
+  private gameState: GameState | undefined;
   private decision: Decision | undefined;
   private decisions = 0;
   private inputTokens = 0;
@@ -63,7 +48,7 @@ export class AgentSession {
     this.deadlineTimer = setTimeout(() => this.stop("Session time limit reached."), options.maxSeconds * 1000);
     this.deadlineTimer.unref();
     this.record({ type: "session", mode: options.mode, objectives: options.objectives, romSha256: emulator.rom.sha256,
-      console: emulator.descriptor.consoleId, actions: this.actions, limits: {
+      console: emulator.descriptor.consoleId, controllerActions: this.actions, limits: {
         decisions: options.maxDecisions, seconds: options.maxSeconds, requests: options.budget.limits,
       } });
   }
@@ -72,6 +57,7 @@ export class AgentSession {
   get advancing(): boolean { return this.state === "acting" || this.state === "idle"; }
   get snapshot() {
     return { mode: this.options.mode, state: this.state, goal: this.options.objectives.goal,
+      observationMode: this.options.observer.kind ?? "custom", gameState: this.gameState ?? null,
       decisions: this.decisions, maxDecisions: this.options.maxDecisions,
       requests: this.options.budget.requests, maxRequests: this.options.budget.limits.maxRequests,
       inputTokens: this.inputTokens, outputTokens: this.outputTokens,
@@ -94,8 +80,9 @@ export class AgentSession {
   /** A restored or reset emulator must not inherit visual history from another timeline. */
   clearHistory(): void {
     this.pause();
+    this.options.observer.reset?.();
     this.history = []; this.previous = undefined; this.screenHash = undefined;
-    this.unchangedScreens = 0; this.observation = ""; this.decision = undefined;
+    this.unchangedScreens = 0; this.observation = ""; this.decision = undefined; this.gameState = undefined;
     this.record({ type: "timeline-reset", frame: this.emulator.frameNumber });
   }
 
@@ -145,16 +132,20 @@ export class AgentSession {
     if (signal.aborted || generation !== this.generation) return;
     if (typeof observation.text !== "string" || !observation.text.trim() || observation.text.length > 6000) throw new AgentFailure("Invalid visual observation.");
     this.observation = observation.text;
+    const actions = structuredClone(observation.actions ?? this.actions);
+    validateAgentActions(actions, this.emulator.descriptor.buttons);
+    if (observation.gameState) validateGameState(observation.gameState, frame.number);
+    this.gameState = observation.gameState ? structuredClone(observation.gameState) : undefined;
     this.inputTokens += observation.usage.inputTokens; this.outputTokens += observation.usage.outputTokens;
     this.unchangedScreens = hash === this.screenHash ? this.unchangedScreens + 1 : 0;
     this.screenHash = hash; this.previous = frame;
     this.state = "thinking";
     const context = { objectives: this.options.objectives, console: this.emulator.descriptor.consoleId,
       frame: frame.number, observation: this.observation, unchangedScreens: this.unchangedScreens,
-      history: [...this.history], actions: this.actions };
+      history: [...this.history], actions, ...(this.gameState ? { gameState: structuredClone(this.gameState) } : {}) };
     const decision = await this.options.decider.decide(context, signal);
     if (signal.aborted || generation !== this.generation) return;
-    const action = this.actions.find((candidate) => candidate.id === decision.actionId);
+    const action = actions.find((candidate) => candidate.id === decision.actionId);
     if (!action) throw new AgentFailure("Jev selected an action outside the supplied controller action set.");
     if (decision.confidence !== null && (!Number.isFinite(decision.confidence) || decision.confidence < 0 || decision.confidence > 1)) throw new AgentFailure("Invalid Jev confidence.");
     this.decisions++; this.decision = decision;

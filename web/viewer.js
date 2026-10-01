@@ -92,13 +92,14 @@ function renderStatus(status) {
   document.querySelector("#toggle").textContent = paused ? "Resume" : "Pause";
   document.querySelector("#frame-number").textContent = status.frame.toLocaleString("en-US");
   document.querySelector("#speed").textContent = `${status.speed}×`;
+  document.querySelector("#game-reader").textContent = status.gameReader === "emulator" ? "Emulator metadata. No semantic game reader is configured." : `Game reader: ${status.gameReader}`;
   if (status.agent) {
     const agent = status.agent;
     document.querySelector("#agent-panel").hidden = false;
-    document.querySelector("#session-mode").textContent = agent.mode === "mock" ? "Offline mock agent" : "Jev + vision";
-    document.querySelector("#session-intro").textContent = "Watch the agent observe the screen and choose each controller input.";
+    document.querySelector("#session-mode").textContent = agent.mode === "mock" ? "Offline mock agent" : agent.observationMode === "state" ? "Jev + game state" : "Jev + vision";
+    document.querySelector("#session-intro").textContent = agent.observationMode === "state" ? "Watch the agent read the game state and choose each controller input." : "Watch the agent read game state and visual evidence, then choose each controller input.";
     document.querySelector(".keyboard-hint").textContent = "Controller inputs are managed by the agent. You can pause, inspect, or restore a checkpoint.";
-    document.querySelector("#privacy-note").textContent = agent.mode === "mock" ? "Mock mode runs locally without API calls." : "Live mode sends screenshots and observations through AI Gateway.";
+    document.querySelector("#privacy-note").textContent = agent.mode === "mock" ? "Mock mode runs locally without API calls." : agent.observationMode === "state" ? "Game state goes to Jev. No screenshots are sent." : "Live mode sends screenshots and observations through AI Gateway.";
     document.querySelector("#agent-goal").textContent = agent.goal;
     document.querySelector("#agent-state").textContent = agent.state;
     document.querySelector("#agent-decisions").textContent = `${agent.decisions} / ${agent.maxDecisions}`;
@@ -160,6 +161,7 @@ async function poll() {
     if (!initialized || performance.now() - lastStatusAt > 500) {
       renderStatus(await request("/api/status"));
       lastStatusAt = performance.now();
+      if (document.querySelector("#game-state-panel").open) await renderGameState();
     }
     const response = await fetch("/api/frame");
     if (!response.ok) throw new Error("Could not read the current frame.");
@@ -170,6 +172,17 @@ async function poll() {
   setTimeout(poll, document.hidden ? 500 : 33);
 }
 void poll();
+
+async function renderGameState() {
+  const snapshot = await request("/api/game-state");
+  document.querySelector("#game-state").textContent = JSON.stringify({ frame: snapshot.state.frame,
+    values: snapshot.state.values, descriptions: snapshot.state.descriptions,
+    availableActions: snapshot.actions.map((action) => ({ id: action.id, buttons: action.buttons, frames: action.frames })),
+  }, null, 2);
+}
+document.querySelector("#game-state-panel").addEventListener("toggle", (event) => {
+  if (event.target.open) void renderGameState().catch((error) => message(error.message, true));
+});
 
 async function pollAudio() {
   if (audioSupported && audio.enabled && !document.hidden) {

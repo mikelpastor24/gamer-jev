@@ -6,8 +6,8 @@ import { parseCliOptions } from "../src/config/cli-options.js";
 import { parseObjectives } from "../src/config/objectives.js";
 import { createDemoRom } from "../src/demo/rom.js";
 import { GameBoyEmulator } from "../src/emulator/game-boy/game-boy-emulator.js";
-import { createMockProviders } from "../src/jev/mock.js";
-import { RequestBudget } from "../src/jev/requests.js";
+import { createMockProviders } from "./fixtures/agent-providers.js";
+import { RequestBudget } from "../src/providers/requests.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 

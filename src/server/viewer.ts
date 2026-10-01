@@ -5,6 +5,8 @@ import type { Emulator } from "../core/emulator.js";
 import { hasAudio, validateAction } from "../core/emulator.js";
 import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
 import type { AgentSession } from "../runner/agent-session.js";
+import type { GameStateProvider } from "../core/agent.js";
+import { createEmulatorStateProvider } from "../observation/state.js";
 
 export interface ViewerOptions {
   readonly port: number;
@@ -12,6 +14,7 @@ export interface ViewerOptions {
   readonly paused: boolean;
   readonly checkpointPath: string;
   readonly agent?: AgentSession;
+  readonly gameState?: GameStateProvider;
 }
 
 export interface Viewer {
@@ -33,6 +36,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   let failure: string | null = null;
   let audioEpoch = 0;
   const agent = options.agent;
+  const gameState = options.gameState ?? createEmulatorStateProvider(emulator, 24);
   if (paused) agent?.pause();
 
   const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
@@ -48,6 +52,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     audioEpoch,
     audioPaused: audioPaused(),
     agent: agent?.snapshot ?? null,
+    gameReader: gameState.id,
   });
   const json = (response: ServerResponse, value: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json" });
@@ -90,6 +95,8 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         const frame = emulator.captureFrame();
         response.writeHead(200, { "Content-Type": "application/octet-stream", "X-Frame-Number": String(frame.number) });
         response.end(frame.pixels);
+      } else if (path === "/api/game-state") {
+        json(response, gameState.read(emulator.captureFrame()));
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
         const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);
@@ -153,6 +160,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       pause();
       emulator.reset();
       agent?.clearHistory();
+      if (!agent) gameState.reset?.();
       failure = null;
     } else if (path === "/api/save") {
       await saveStateFile(emulator, options.checkpointPath);
@@ -160,6 +168,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       pause();
       await loadStateFile(emulator, options.checkpointPath);
       agent?.clearHistory();
+      if (!agent) gameState.reset?.();
       failure = null;
     } else {
       json(response, { error: "Not found." }, 404);
