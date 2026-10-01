@@ -1,0 +1,10 @@
+{
+  "goal": "Start the game and make progress toward completing it.",
+  "constraints": [
+    "Avoid restarting the game if progress can be preserved."
+  ],
+  "milestones": [
+    "Reach gameplay from the title screen.",
+    "Complete the first visible challenge."
+  ]
+}

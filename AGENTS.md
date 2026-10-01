@@ -27,8 +27,11 @@ pinned `serverboy` 0.0.7 backend. It includes a console registry, Game Boy adapt
 bounded headless runner, local manual viewer with stereo audio, PNG captures,
 and save states. Audio is an optional `AudioSource` capability. Keep its queues
 bounded and clear pending playback on pause, reset, restore, and tab hiding.
-Jev decisions, observation interpretation, objectives, and game profiles remain
-future work. No Git repository has been initialized locally.
+The agent loop uses Vercel AI Gateway for both Gemini visual observations and
+Jev typed action choices, sharing one server-side API key. A deterministic mock
+works offline. Objectives, bounded sessions, recent history, JSONL records,
+viewer inspection, and headless agent execution are implemented. Game-specific
+profiles and verified progress checks remain future work.
 
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
@@ -52,8 +55,9 @@ and Linux. Keep these commands and the README aligned with actual behavior.
 ## Architectural Boundaries
 
 Use explicit interfaces between the following components. The emulation,
-configuration, and manual runner paths below exist; Jev and game profiles are
-planned. The local viewer lives in `src/server/` and `web/`.
+configuration, observation contracts, Jev adapters, and runners below exist;
+game profiles are planned. Visual perception lives in the Gateway provider;
+the local viewer lives in `src/server/` and `web/`.
 
 | Component | Suggested location | Responsibility |
 | --- | --- | --- |
@@ -104,6 +108,10 @@ decisions around selecting from explicitly supplied actions.
   do not invent an API contract or assume gateway keys are direct TypeSafe keys.
 - Include timeouts, bounded retries, throttling, and configurable call limits.
   Stop or pause cleanly when credentials, provider responses, or limits fail.
+- Vision and Jev share the request budget. Count every application HTTP attempt,
+  including failures and cancelled requests. Use the documented Gateway HTTP
+  endpoints and validate responses without adding SDK dependencies. Invalidate pending
+  observations and decisions on pause, reset, restore, and shutdown.
 - Provide a mock mode that works without credentials, network calls, or API costs.
 
 ## Objectives and Session Records

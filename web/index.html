@@ -11,12 +11,12 @@
     <main>
       <header>
         <a class="brand" href="/">Gamer Jev<span>EMULATION LAB</span></a>
-        <span class="badge">Manual session</span>
+        <span id="session-mode" class="badge">Manual session</span>
       </header>
       <section class="intro">
         <p class="eyebrow">LOCAL EMULATOR</p>
         <h1 id="game-title">Loading your cartridge…</h1>
-        <p>Play, inspect, and pick up where you left off.</p>
+        <p id="session-intro">Play, inspect, and pick up where you left off.</p>
       </section>
       <div class="workspace">
         <section class="console" aria-label="Game screen and controls">
@@ -36,6 +36,20 @@
             <div><dt>Speed</dt><dd id="speed">1×</dd></div>
             <div><dt>Resolution</dt><dd id="resolution">160 × 144</dd></div>
           </dl>
+          <section id="agent-panel" hidden aria-label="Agent decisions">
+            <p class="eyebrow">AGENT</p>
+            <p id="agent-goal" class="description"></p>
+            <dl>
+              <div><dt>State</dt><dd id="agent-state">Idle</dd></div>
+              <div><dt>Decisions</dt><dd id="agent-decisions">0</dd></div>
+              <div><dt>Model attempts</dt><dd id="agent-requests">0</dd></div>
+              <div><dt>Selected input</dt><dd id="agent-action">Waiting</dd></div>
+              <div><dt>Confidence</dt><dd id="agent-confidence">Unavailable</dd></div>
+            </dl>
+            <details><summary>Visual observation</summary><p id="agent-observation"></p></details>
+            <p id="agent-stop" class="description" role="status"></p>
+            <hr>
+          </section>
           <div class="audio-controls">
             <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
             <label for="volume">Volume <output id="volume-value">35%</output></label>
@@ -54,7 +68,7 @@
           <p id="message" role="status" aria-live="polite"></p>
         </aside>
       </div>
-      <footer><span>ROMs and checkpoints stay on your machine.</span><span>Jev integration is the next milestone.</span></footer>
+      <footer><span>ROMs and checkpoints stay on your machine.</span><span id="privacy-note">Manual mode runs locally.</span></footer>
     </main>
   </body>
 </html>

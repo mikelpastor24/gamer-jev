@@ -4,12 +4,14 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Emulator } from "../core/emulator.js";
 import { hasAudio, validateAction } from "../core/emulator.js";
 import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
+import type { AgentSession } from "../runner/agent-session.js";
 
 export interface ViewerOptions {
   readonly port: number;
   readonly speed: number;
   readonly paused: boolean;
   readonly checkpointPath: string;
+  readonly agent?: AgentSession;
 }
 
 export interface Viewer {
@@ -30,9 +32,12 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   let lastTick = performance.now();
   let failure: string | null = null;
   let audioEpoch = 0;
+  const agent = options.agent;
+  if (paused) agent?.pause();
 
   const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
-  const pause = () => { paused = true; buttons = []; audioEpoch++; discardAudio(); };
+  const pause = () => { paused = true; agent?.pause(); buttons = []; audioEpoch++; discardAudio(); };
+  const audioPaused = () => paused || (agent !== undefined && !agent.advancing);
   const status = () => ({
     descriptor: emulator.descriptor,
     rom: emulator.rom,
@@ -41,6 +46,8 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     speed: options.speed,
     error: failure,
     audioEpoch,
+    audioPaused: audioPaused(),
+    agent: agent?.snapshot ?? null,
   });
   const json = (response: ServerResponse, value: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json" });
@@ -85,7 +92,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         response.end(frame.pixels);
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
-        const data = Buffer.allocUnsafe(paused ? 0 : audio.samples.byteLength);
+        const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);
         for (let index = 0; index < data.length / 4; index++) data.writeFloatLE(audio.samples[index]!, index * 4);
         response.writeHead(200, {
           "Content-Type": "application/octet-stream",
@@ -93,7 +100,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
           "X-Audio-Sample-Rate": String(audio.sampleRate),
           "X-Audio-Channels": String(audio.channels),
           "X-Audio-Epoch": String(audioEpoch),
-          "X-Audio-Paused": String(paused),
+          "X-Audio-Paused": String(audioPaused()),
           "X-Audio-Speed": String(options.speed),
         });
         response.end(data);
@@ -126,11 +133,13 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       const supplied = "buttons" in body ? body.buttons : undefined;
       if (!Array.isArray(supplied) || supplied.some((button: unknown) => typeof button !== "string")) throw new Error("Invalid buttons.");
       validateAction({ buttons: supplied, frames: 1 }, emulator.descriptor.buttons);
+      if (agent && supplied.length) throw new Error("Controller input is managed by the agent in this session.");
       buttons = [...supplied];
       inputAt = performance.now();
     } else if (path === "/api/pause") {
       pause();
     } else if (path === "/api/resume") {
+      agent?.resume();
       failure = null;
       audioEpoch++;
       discardAudio();
@@ -139,15 +148,18 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     } else if (path === "/api/step") {
       pause();
       emulator.advance({ buttons: [], frames: 1 });
+      agent?.clearHistory();
     } else if (path === "/api/reset") {
       pause();
       emulator.reset();
+      agent?.clearHistory();
       failure = null;
     } else if (path === "/api/save") {
       await saveStateFile(emulator, options.checkpointPath);
     } else if (path === "/api/load") {
       pause();
       await loadStateFile(emulator, options.checkpointPath);
+      agent?.clearHistory();
       failure = null;
     } else {
       json(response, { error: "Not found." }, 404);
@@ -162,14 +174,26 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   });
   const timer = setInterval(() => {
     const now = performance.now();
+    if (agent?.terminal && !paused) { failure = agent.snapshot.state === "error" ? agent.snapshot.stopReason : null; pause(); }
     if (paused) { lastTick = now; return; }
     if (now - inputAt > 500) buttons = [];
     const interval = 1000 / (emulator.descriptor.framesPerSecond * options.speed);
     const frames = Math.min(3, Math.floor((now - lastTick) / interval));
     if (frames < 1) return;
     lastTick = Math.max(lastTick + frames * interval, now - 3 * interval);
-    try { emulator.advance({ buttons, frames }); }
-    catch (error) { failure = error instanceof Error ? error.message : "Emulation failed."; pause(); }
+    try {
+      if (agent) {
+        const wasAdvancing = agent.advancing;
+        agent.tick(frames);
+        if (!agent.advancing) lastTick = now;
+        if (wasAdvancing && !agent.advancing) { audioEpoch++; discardAudio(); }
+      } else emulator.advance({ buttons, frames });
+    }
+    catch (error) {
+      failure = error instanceof Error ? error.message : "Emulation failed.";
+      agent?.stop("Emulation failed.", true);
+      pause();
+    }
   }, 8);
 
   const address = server.address();
@@ -179,6 +203,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     async close() {
       clearInterval(timer);
       pause();
+      agent?.stop("Viewer closed.");
       await closeServer(server);
     },
   };

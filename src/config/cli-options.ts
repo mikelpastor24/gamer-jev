@@ -15,6 +15,13 @@ export interface CliOptions {
   loadPath: string | undefined;
   savePath: string | undefined;
   screenshotPath: string | undefined;
+  agent: "gateway" | "mock" | undefined;
+  goal: string | undefined;
+  objectivesPath: string | undefined;
+  decisions: number;
+  requests: number;
+  maxSeconds: number;
+  actionFrames: number;
 }
 
 function integer(value: string, name: string, minimum: number, maximum: number): number {
@@ -41,6 +48,13 @@ export function parseCliOptions(args: string[]): CliOptions {
     load: { type: "string" },
     save: { type: "string" },
     screenshot: { type: "string" },
+    agent: { type: "string" },
+    goal: { type: "string" },
+    objectives: { type: "string" },
+    decisions: { type: "string", default: "100" },
+    requests: { type: "string", default: "300" },
+    "max-seconds": { type: "string", default: "300" },
+    "action-frames": { type: "string", default: "24" },
   }, strict: true, allowPositionals: false });
   const speed = Number(values.speed);
   if (!values.speed.trim() || !Number.isFinite(speed) || speed <= 0 || speed > 8) {
@@ -54,6 +68,12 @@ export function parseCliOptions(args: string[]): CliOptions {
     }
     if (values.headless && values.paused) throw new Error("--paused is only available in the viewer.");
     if (!values.headless && values.screenshot) throw new Error("--screenshot requires --headless; the viewer has a screenshot button.");
+    if (values.agent !== undefined && values.agent !== "gateway" && values.agent !== "mock") throw new Error("--agent must be gateway or mock.");
+    if (values.agent && Boolean(values.goal) === Boolean(values.objectives)) throw new Error("Agent mode requires exactly one of --goal <text> or --objectives <path>.");
+    if (values.agent && values.buttons !== undefined) throw new Error("--buttons cannot be combined with agent mode.");
+    if (!values.agent && (values.goal !== undefined || values.objectives !== undefined || args.some((arg) => /^--(decisions|requests|max-seconds|action-frames)(=|$)/.test(arg)))) {
+      throw new Error("Objectives and agent limits require --agent gateway or --agent mock.");
+    }
   }
   return {
     help: values.help ?? false,
@@ -62,7 +82,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     romPath: values.rom,
     demo: values.demo ?? false,
     headless: values.headless ?? false,
-    frames: integer(values.frames ?? "120", "--frames", 1, 1_000_000),
+    frames: integer(values.frames ?? (values.agent ? "1000000" : "120"), "--frames", 1, 1_000_000),
     buttons: values.buttons === undefined ? [] : values.buttons.split(",").map((button) => button.trim().toUpperCase()),
     port: integer(values.port, "--port", 1, 65535),
     speed,
@@ -70,6 +90,13 @@ export function parseCliOptions(args: string[]): CliOptions {
     loadPath: values.load,
     savePath: values.save,
     screenshotPath: values.screenshot,
+    agent: values.agent as "gateway" | "mock" | undefined,
+    goal: values.goal,
+    objectivesPath: values.objectives,
+    decisions: integer(values.decisions, "--decisions", 1, 10_000),
+    requests: integer(values.requests, "--requests", 1, 10_000),
+    maxSeconds: integer(values["max-seconds"], "--max-seconds", 1, 86_400),
+    actionFrames: integer(values["action-frames"], "--action-frames", 1, 600),
   };
 }
 
@@ -89,5 +116,12 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --load <path>        Restore a compatible checkpoint before running
   --save <path>        Checkpoint destination; saved at exit and from the viewer
   --screenshot <path>  Write the final headless frame as PNG
+  --agent <mode>       Jev + vision through gateway, or offline mock
+  --goal <text>        Primary objective for the agent
+  --objectives <path>  JSON objectives instead of --goal
+  --decisions <count>  Agent decision limit (default: 100)
+  --requests <count>   Combined vision/Jev attempt limit (default: 300)
+  --max-seconds <n>    Agent wall-clock limit, including pauses (default: 300)
+  --action-frames <n>  Frames per chosen input, plus 4 release frames (default: 24)
   --help, -h           Show this help
 `;

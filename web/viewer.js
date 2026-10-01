@@ -12,6 +12,7 @@ let initialized = false;
 let lastStatusAt = 0;
 const audio = new AudioPlayer();
 let audioSupported = false;
+let agentMode = false;
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
@@ -38,7 +39,7 @@ function heldButtons() {
 }
 
 async function sendInput() {
-  if (!initialized || inputPending) return;
+  if (!initialized || inputPending || agentMode) return;
   inputPending = true;
   const buttons = heldButtons();
   document.querySelectorAll("#controller button").forEach((element) => element.classList.toggle("active", buttons.includes(element.dataset.button)));
@@ -55,6 +56,7 @@ function clearInput() {
 function renderStatus(status) {
   if (!initialized) {
     supported = status.descriptor.buttons;
+    agentMode = status.agent !== null && status.agent !== undefined;
     audioSupported = status.descriptor.capabilities.audio === true;
     document.querySelector("#sound").disabled = !audioSupported;
     document.querySelector("#volume").disabled = !audioSupported;
@@ -67,6 +69,7 @@ function renderStatus(status) {
     for (const name of supported) {
       const button = document.createElement("button");
       button.type = "button";
+      button.disabled = agentMode;
       button.textContent = name;
       button.dataset.button = name;
       button.setAttribute("aria-label", `Hold ${name}`);
@@ -84,11 +87,28 @@ function renderStatus(status) {
     initialized = true;
   }
   paused = status.paused;
-  audio.setPaused(paused);
-  document.querySelector("#run-state").textContent = status.error ? "Error" : paused ? "Paused" : "Running";
+  audio.setPaused(status.audioPaused ?? paused);
+  document.querySelector("#run-state").textContent = status.error ? "Error" : paused ? "Paused" : status.agent?.state ?? "Running";
   document.querySelector("#toggle").textContent = paused ? "Resume" : "Pause";
   document.querySelector("#frame-number").textContent = status.frame.toLocaleString("en-US");
   document.querySelector("#speed").textContent = `${status.speed}×`;
+  if (status.agent) {
+    const agent = status.agent;
+    document.querySelector("#agent-panel").hidden = false;
+    document.querySelector("#session-mode").textContent = agent.mode === "mock" ? "Offline mock agent" : "Jev + vision";
+    document.querySelector("#session-intro").textContent = "Watch the agent observe the screen and choose each controller input.";
+    document.querySelector(".keyboard-hint").textContent = "Controller inputs are managed by the agent. You can pause, inspect, or restore a checkpoint.";
+    document.querySelector("#privacy-note").textContent = agent.mode === "mock" ? "Mock mode runs locally without API calls." : "Live mode sends screenshots and observations through AI Gateway.";
+    document.querySelector("#agent-goal").textContent = agent.goal;
+    document.querySelector("#agent-state").textContent = agent.state;
+    document.querySelector("#agent-decisions").textContent = `${agent.decisions} / ${agent.maxDecisions}`;
+    document.querySelector("#agent-requests").textContent = `${agent.requests} / ${agent.maxRequests}`;
+    document.querySelector("#agent-action").textContent = agent.action?.replace(/^press_/, "").replaceAll("_", " + ").toUpperCase() ?? "Waiting";
+    document.querySelector("#agent-confidence").textContent = agent.confidence === null ? "Unavailable" : `${Math.round(agent.confidence * 100)}%`;
+    document.querySelector("#agent-observation").textContent = agent.observation || "Waiting for the first observation.";
+    document.querySelector("#agent-stop").textContent = agent.stopReason ?? "";
+    document.querySelector("#toggle").disabled = agent.state === "stopped" || agent.state === "error";
+  }
   if (status.error) message(status.error, true);
 }
 
@@ -120,10 +140,12 @@ document.querySelector("#volume").addEventListener("input", (event) => {
   document.querySelector("#volume-value").textContent = `${event.target.value}%`;
 });
 window.addEventListener("keydown", (event) => {
+  if (agentMode) return;
   if (!supported.includes(keyMap[event.code])) return;
   event.preventDefault(); keyboard.add(event.code); void sendInput();
 });
 window.addEventListener("keyup", (event) => {
+  if (agentMode) return;
   if (!supported.includes(keyMap[event.code])) return;
   event.preventDefault(); keyboard.delete(event.code); void sendInput();
 });

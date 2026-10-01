@@ -7,6 +7,9 @@ import { PNG } from "pngjs";
 import { createDemoRom } from "../src/demo/rom.js";
 import { GameBoyEmulator } from "../src/emulator/game-boy/game-boy-emulator.js";
 import { startViewer } from "../src/server/viewer.js";
+import { createMockProviders } from "../src/jev/mock.js";
+import { RequestBudget } from "../src/jev/requests.js";
+import { AgentSession } from "../src/runner/agent-session.js";
 
 test("the local viewer exposes frames, controls, screenshots, and compatible checkpoints", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamer-jev-test-"));
@@ -70,4 +73,32 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("the agent viewer exposes decisions, rejects manual input, and stops at its session limit", async () => {
+  const emulator = new GameBoyEmulator(createDemoRom());
+  const agent = new AgentSession(emulator, { ...createMockProviders(), mode: "mock",
+    objectives: { goal: "Exercise the controller", constraints: [], milestones: [] },
+    budget: new RequestBudget({ maxRequests: 10, timeoutMs: 1000, intervalMs: 0, retries: 0 }),
+    actionFrames: 4, maxDecisions: 2, maxSeconds: 60,
+  });
+  const viewer = await startViewer(emulator, { port: 0, speed: 1, paused: true, checkpointPath: "unused-checkpoint.json", agent });
+  const post = (path: string, body: unknown = {}) => fetch(`${viewer.url}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json", Origin: viewer.url }, body: JSON.stringify(body),
+  });
+  try {
+    const status = await (await fetch(`${viewer.url}/api/status`)).json();
+    assert.equal(status.agent.mode, "mock"); assert.equal(status.agent.goal, "Exercise the controller");
+    assert.equal(status.agent.state, "paused");
+    assert.equal((await post("/api/input", { buttons: ["A"] })).status, 400);
+    assert.equal((await post("/api/input", { buttons: [] })).status, 200);
+    assert.equal((await post("/api/resume")).status, 200);
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => { if (agent.terminal) { clearInterval(timer); resolve(); } }, 10);
+    });
+    assert.equal(emulator.frameNumber, 16); assert.equal(agent.snapshot.decisions, 2);
+    const stopped = await (await fetch(`${viewer.url}/api/status`)).json();
+    assert.equal(stopped.audioPaused, true); assert.match(stopped.agent.stopReason, /Decision limit/);
+    assert.equal((await post("/api/resume")).status, 400);
+  } finally { await viewer.close(); emulator.dispose(); }
 });
