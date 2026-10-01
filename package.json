@@ -1,0 +1,30 @@
+{
+  "name": "gamer-jev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A game-agnostic emulation foundation for TypeSafe AI's Jev.",
+  "type": "module",
+  "license": "GPL-2.0-only",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "demo": "tsx src/cli.ts --demo",
+    "headless": "tsx src/cli.ts --headless",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "pngjs": "7.0.0",
+    "serverboy": "0.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/pngjs": "6.0.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

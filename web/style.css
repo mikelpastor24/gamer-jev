@@ -1,0 +1,40 @@
+:root { color-scheme: light; --ink: #26352d; --muted: #748078; --paper: #f6f7f2; --line: #dce1d8; --green: #325b45; font-family: "Segoe UI", system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--paper); }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 32px 24px; }
+header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 26px; }
+.brand { color: var(--ink); text-decoration: none; font-weight: 750; font-size: 23px; letter-spacing: -1px; }
+.brand span { display: inline-block; margin-left: 18px; font-size: 10px; letter-spacing: 2px; font-weight: 500; color: var(--muted); }
+.badge { padding: 8px 12px; border: 1px solid var(--line); border-radius: 24px; font-size: 12px; }
+.intro { margin: 42px 0 28px; }
+.eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 2px; color: var(--muted); margin: 0 0 14px; }
+h1 { font-weight: 650; font-size: clamp(26px, 4vw, 36px); margin: 0 0 10px; letter-spacing: -1px; overflow-wrap: anywhere; }
+.intro > p:last-child { color: var(--muted); margin: 0; font-size: 14px; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 24px; align-items: start; }
+.console { border-radius: 18px; border: 1px solid var(--line); background: #e9ede4; padding: 28px; }
+.screen-surround { padding: 22px; border-radius: 8px; background: #28362e; box-shadow: inset 0 2px 8px #0003; }
+canvas { display: block; width: 100%; height: auto; background: #efffde; image-rendering: pixelated; }
+.screen-caption { display: flex; justify-content: space-between; margin: 14px 2px 24px; font-size: 11px; color: #617263; font-weight: 600; }
+#run-state { text-transform: uppercase; letter-spacing: 1px; }
+.controller { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.controller button { min-width: 44px; touch-action: none; user-select: none; background: #f7f8f3; padding: 12px 10px; }
+.controller button.active { background: var(--green); border-color: var(--green); color: white; transform: translateY(1px); }
+.keyboard-hint { text-align: center; font-size: 11px; line-height: 1.8; color: var(--muted); margin: 22px 0 0; }
+.panel { border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 24px; }
+button, .download { font: inherit; font-size: 12px; }
+button { color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; cursor: pointer; }
+button:hover { border-color: #96a696; }
+button:focus-visible, a:focus-visible { outline: 3px solid #8ab297; outline-offset: 3px; }
+button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+.primary-controls, .save-controls { display: grid; gap: 8px; }
+dl { margin: 24px 0; font-size: 12px; }
+dl > div { display: flex; justify-content: space-between; padding: 9px 0; }
+dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.description { font-size: 12px; line-height: 1.7; color: var(--muted); margin-bottom: 18px; }
+.download { display: inline-block; margin-top: 20px; color: var(--green); text-decoration: none; }
+.quiet { width: 100%; background: var(--paper); }
+#message { color: var(--green); font-size: 12px; line-height: 1.6; margin-bottom: 0; overflow-wrap: anywhere; }
+#message.error { color: #a13c30; }
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 26px 0 0; color: var(--muted); font-size: 11px; }
+@media (max-width: 720px) { main { padding: 24px 18px; } .workspace { grid-template-columns: 1fr; } .brand span { display: none; } .console { padding: 18px; } .screen-surround { padding: 14px; } .intro { margin-top: 30px; } }

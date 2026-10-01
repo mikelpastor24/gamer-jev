@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gamer Jev — Emulator</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/viewer.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <a class="brand" href="/">Gamer Jev<span>EMULATION LAB</span></a>
+        <span class="badge">Manual session</span>
+      </header>
+      <section class="intro">
+        <p class="eyebrow">LOCAL EMULATOR</p>
+        <h1 id="game-title">Loading your cartridge…</h1>
+        <p>Play, inspect, and pick up where you left off.</p>
+      </section>
+      <div class="workspace">
+        <section class="console" aria-label="Game screen and controls">
+          <div class="screen-surround"><canvas id="screen" width="160" height="144" aria-label="Emulated game display"></canvas></div>
+          <div class="screen-caption"><span id="console-name">Game Boy</span><span id="run-state" role="status">Connecting</span></div>
+          <div id="controller" class="controller" aria-label="Controller buttons"></div>
+          <p class="keyboard-hint">Arrow keys to move · Z / X for A / B · Enter to start · Shift to select</p>
+        </section>
+        <aside class="panel">
+          <p class="eyebrow">SESSION</p>
+          <div class="primary-controls">
+            <button id="toggle" class="primary" type="button">Pause</button>
+            <button id="step" type="button">Step one frame</button>
+          </div>
+          <dl>
+            <div><dt>Frame</dt><dd id="frame-number">0</dd></div>
+            <div><dt>Speed</dt><dd id="speed">1×</dd></div>
+            <div><dt>Resolution</dt><dd id="resolution">160 × 144</dd></div>
+          </dl>
+          <hr>
+          <p class="eyebrow">CHECKPOINT</p>
+          <p class="description">Save the current session to continue later.</p>
+          <div class="save-controls">
+            <button id="save" type="button">Save checkpoint</button>
+            <button id="load" type="button">Restore checkpoint</button>
+          </div>
+          <a class="download" href="/api/screenshot" download="screenshot.png">Download screenshot ↗</a>
+          <hr>
+          <button id="reset" class="quiet" type="button">Reset cartridge</button>
+          <p id="message" role="status" aria-live="polite"></p>
+        </aside>
+      </div>
+      <footer><span>ROMs and checkpoints stay on your machine.</span><span>Jev integration is the next milestone.</span></footer>
+    </main>
+  </body>
+</html>
