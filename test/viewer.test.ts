@@ -21,6 +21,7 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     assert.match(await page.text(), /lang="en"/);
     assert.match(page.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
     assert.equal((await fetch(`${viewer.url}/viewer.js`)).status, 200);
+    assert.equal((await fetch(`${viewer.url}/audio.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/style.css`)).status, 200);
     const before = await fetch(`${viewer.url}/api/frame`);
     assert.equal((await before.arrayBuffer()).byteLength, 160 * 144 * 4);
@@ -47,6 +48,22 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     const form = await fetch(`${viewer.url}/api/reset`, { method: "POST", body: "{}" });
     assert.equal(form.status, 403);
     assert.equal((await fetch(`${viewer.url}/missing`)).status, 404);
+    const pausedAudio = await fetch(`${viewer.url}/api/audio`);
+    assert.equal(pausedAudio.headers.get("X-Audio-Paused"), "true");
+    assert.equal((await pausedAudio.arrayBuffer()).byteLength, 0);
+    await post("/api/resume");
+    emulator.advance({ buttons: [], frames: 5 });
+    const audioResponse = await fetch(`${viewer.url}/api/audio`);
+    assert.equal(audioResponse.headers.get("X-Audio-Format"), "f32le");
+    assert.equal(audioResponse.headers.get("X-Audio-Channels"), "2");
+    const samples = await audioResponse.arrayBuffer();
+    assert.ok(samples.byteLength > 0 && samples.byteLength % 8 === 0);
+    assert.ok(Number.isFinite(new DataView(samples).getFloat32(0, true)));
+    const previousEpoch = Number(audioResponse.headers.get("X-Audio-Epoch"));
+    await post("/api/pause");
+    const stoppedAudio = await fetch(`${viewer.url}/api/audio`);
+    assert.equal((await stoppedAudio.arrayBuffer()).byteLength, 0);
+    assert.ok(Number(stoppedAudio.headers.get("X-Audio-Epoch")) > previousEpoch);
   } finally {
     await viewer.close();
     emulator.dispose();

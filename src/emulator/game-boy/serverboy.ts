@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import type { AudioChunk } from "../../core/emulator.js";
 
 const require = createRequire(import.meta.url);
 
@@ -11,6 +12,12 @@ interface ServerboyCore {
   CPUCyclesTotal: number;
   CPUCyclesTotalCurrent: number;
   JoyPad: number;
+  clocksPerSecond: number;
+  audioResamplerFirstPassFactor: number;
+  audioIndex: number;
+  audioTicks: number;
+  downsampleInput: number;
+  downSampleInputDivider: number;
   OPCODE: Array<(core: ServerboyCore) => void>;
   memoryRead(address: number): number;
   run(): void;
@@ -19,6 +26,7 @@ interface ServerboyCore {
   saving(state: unknown[]): void;
   swizzleFrameBuffer(): void;
   requestDraw(): void;
+  outputAudio(): void;
 }
 
 interface Serverboy {
@@ -37,7 +45,7 @@ const settings = require("serverboy/src/gameboy_core/settings.js") as unknown[];
 export const GAME_BOY_FPS = 4_194_304 / 70_224;
 
 // Settings are shared by serverboy instances; every adapter uses this same mode.
-settings[0] = false;
+settings[0] = true;
 settings[1] = false;
 settings[2] = true;
 settings[4] = false;
@@ -50,12 +58,22 @@ export interface ServerboySnapshot {
     readonly cycles: number;
     readonly cycleRemainder: number;
   };
+  /** Optional for compatibility with checkpoints made before audio playback. */
+  readonly audioPhase?: {
+    readonly index: number;
+    readonly ticks: number;
+    readonly accumulator: number;
+  };
 }
 
 /** All access to the pinned backend's undocumented internals lives here. */
 export class ServerboyBridge {
   private readonly backend: Serverboy;
   private readonly core: ServerboyCore;
+  private readonly samples: Float32Array;
+  private samplePosition = 0;
+  private sampleCount = 0;
+  private readonly sampleRate: number;
 
   constructor(private readonly rom: Buffer) {
     this.backend = new Serverboy();
@@ -67,6 +85,19 @@ export class ServerboyBridge {
       throw new Error("The serverboy backend does not expose the expected core API.");
     }
     this.core = internals.gameboy;
+    this.sampleRate = this.core.clocksPerSecond / this.core.audioResamplerFirstPassFactor;
+    // Keep only the most recent 250 ms, including in headless or muted sessions.
+    this.samples = new Float32Array(Math.ceil(this.sampleRate * 0.25) * 2);
+    const outputAudio = this.core.outputAudio.bind(this.core);
+    this.core.outputAudio = () => {
+      const left = (this.core.downsampleInput >>> 16) * this.core.downSampleInputDivider - 1;
+      const right = (this.core.downsampleInput & 0xffff) * this.core.downSampleInputDivider - 1;
+      this.samples[this.samplePosition] = Math.max(-1, Math.min(1, left));
+      this.samples[this.samplePosition + 1] = Math.max(-1, Math.min(1, right));
+      this.samplePosition = (this.samplePosition + 2) % this.samples.length;
+      this.sampleCount = Math.min(this.sampleCount + 2, this.samples.length);
+      outputAudio();
+    };
     // The legacy backend only logs illegal instructions, some of which have
     // zero cycle cost. Fail instead of allowing an invalid ROM to spin forever.
     this.core.OPCODE = [...this.core.OPCODE];
@@ -104,6 +135,16 @@ export class ServerboyBridge {
     return Uint8Array.from({ length }, (_, offset) => this.core.memoryRead(address + offset));
   }
 
+  drainAudio(): AudioChunk {
+    const samples = new Float32Array(this.sampleCount);
+    const start = (this.samplePosition - this.sampleCount + this.samples.length) % this.samples.length;
+    const first = Math.min(this.sampleCount, this.samples.length - start);
+    samples.set(this.samples.subarray(start, start + first));
+    samples.set(this.samples.subarray(0, this.sampleCount - first), first);
+    this.sampleCount = 0;
+    return { sampleRate: this.sampleRate, channels: 2, samples };
+  }
+
   snapshot(): ServerboySnapshot {
     // The native snapshot starts with the entire ROM. Reuse the user's loaded
     // ROM on restore instead of copying it into every checkpoint.
@@ -115,6 +156,11 @@ export class ServerboyBridge {
         cycles: this.core.CPUCyclesTotal,
         cycleRemainder: this.core.CPUCyclesTotalCurrent,
       },
+      audioPhase: {
+        index: this.core.audioIndex,
+        ticks: this.core.audioTicks,
+        accumulator: this.core.downsampleInput,
+      },
     })) as ServerboySnapshot;
   }
 
@@ -123,6 +169,12 @@ export class ServerboyBridge {
     this.core.emulatorTicks = snapshot.timing.emulatorTicks;
     this.core.CPUCyclesTotal = snapshot.timing.cycles;
     this.core.CPUCyclesTotalCurrent = snapshot.timing.cycleRemainder;
+    if (snapshot.audioPhase) {
+      this.core.audioIndex = snapshot.audioPhase.index;
+      this.core.audioTicks = snapshot.audioPhase.ticks;
+      this.core.downsampleInput = snapshot.audioPhase.accumulator;
+    }
+    this.sampleCount = 0;
     this.core.stopEmulator = 1;
     this.releaseButtons();
     this.core.swizzleFrameBuffer();
@@ -153,5 +205,13 @@ export function validateSnapshot(value: unknown, template: ServerboySnapshot): a
       !Object.values(snapshot.timing).every((number) => typeof number === "number" && Number.isFinite(number)) ||
       Object.keys(template.timing).some((key) => !(key in snapshot.timing))) {
     throw new Error("Invalid Game Boy state data or timing.");
+  }
+  if (snapshot.audioPhase !== undefined) {
+    const phase = snapshot.audioPhase;
+    if (!phase || !Number.isInteger(phase.index) || phase.index < 0 || phase.index >= 95 ||
+        !Number.isInteger(phase.ticks) || phase.ticks < 0 || phase.ticks > 70_224 ||
+        !Number.isFinite(phase.accumulator) || phase.accumulator < 0 || phase.accumulator > 0xffffffff) {
+      throw new Error("Invalid Game Boy audio phase.");
+    }
   }
 }

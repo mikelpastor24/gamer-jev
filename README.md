@@ -6,7 +6,7 @@ user's objectives. Inspired by
 [jev-pokemon](https://github.com/christianmat/jev-pokemon).
 
 The first milestone is implemented: a real Game Boy emulator, a local manual
-viewer, a bounded headless runner, screenshots, and compatible save states.
+viewer with stereo audio, a bounded headless runner, screenshots, and compatible save states.
 Jev integration and automatic interpretation of game observations are planned.
 No API key is needed for this milestone.
 
@@ -30,7 +30,8 @@ npm run demo
 
 Open the URL printed by the CLI, normally **http://127.0.0.1:8787**.
 The demo is an original checkerboard program that scrolls while you hold a
-direction. It is generated in memory and contains no third-party game assets.
+direction and plays a steady 440 Hz test tone when sound is enabled. It is
+generated in memory and contains no third-party game assets.
 
 To load your own ROM:
 
@@ -53,7 +54,7 @@ by Git. Do not add commercial ROMs or generated gameplay artifacts to the repo.
 
 You can also hold the on-screen buttons with a mouse or touch. The viewer
 provides pause/resume, a single-frame step, reset, checkpoint save/restore, and
-PNG screenshot downloads. Inputs are cleared when the window loses focus and
+PNG screenshot downloads, stereo sound, mute, and volume controls. Inputs are cleared when the window loses focus and
 expire on the server if the viewer disconnects.
 
 ```sh
@@ -61,8 +62,15 @@ npm start -- --rom "roms/my-game.gb" --paused --speed 1 --port 8787
 ```
 
 Speed is a target relative to the approximately 59.73 Hz Game Boy frame rate.
-Actual throughput depends on your machine and the emulator. Audio playback is
-not implemented.
+Actual throughput depends on your machine and the emulator.
+
+Click **Enable sound** in the viewer to start audio; browsers require a user
+interaction before playback. Use **Mute sound** or the volume slider to adjust
+it. Audio follows pause/resume and is cleared when resetting, restoring a
+checkpoint, or hiding the tab. Speed changes affect sound tempo and pitch.
+The audio queue is bounded so muted or disconnected viewers cannot accumulate
+an ever-growing recording. Headless runs generate audio internally but do not
+play it through the system speakers.
 
 **Press Ctrl+C to stop.** The viewer saves a checkpoint under
 `saves/game-boy/<rom-sha256>/checkpoint.json` before exiting. The save button
@@ -127,6 +135,14 @@ are copies, so callers cannot change the running emulator's memory or screen.
 Game-specific memory access is an optional capability of the Game Boy adapter;
 the shared runtime does not depend on a memory map.
 
+Audio is another optional capability: an `AudioSource` exposes `drainAudio()`
+with the source sample rate, channel count, and owned interleaved `Float32Array`
+PCM samples. The Game Boy adapter retains at most 250 ms of samples. The viewer
+streams little-endian float PCM to Web Audio and removes the legacy APU's DC
+offset before playback. Audio data is not included in checkpoints; the sample
+generation phase is saved so playback can continue consistently after restoring.
+Checkpoints made before audio support remain loadable.
+
 The adapter configures each backend CPU interval to 70,224 clock cycles, rather
 than treating the backend's default 8 ms interval as a hardware frame. The
 initial power-on state comes from the emulator's boot-skipping initialization;
@@ -137,7 +153,7 @@ frame numbers count the steps requested after loading the ROM.
 Implement the `Emulator` contract in `src/core/emulator.ts` and register a
 factory with `EmulatorRegistry.register()`. Each adapter declares its own
 console ID, available buttons, screen dimensions, frame rate, backend version,
-and capabilities. Factories can initialize asynchronously, including a future
+and capabilities, including whether it supplies audio. Factories can initialize asynchronously, including a future
 WebAssembly backend. Frame operations are synchronous after initialization.
 
 The viewer and headless runner use that common contract. Keep console-specific

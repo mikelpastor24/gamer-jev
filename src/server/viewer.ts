@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Emulator } from "../core/emulator.js";
-import { validateAction } from "../core/emulator.js";
+import { hasAudio, validateAction } from "../core/emulator.js";
 import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
 
 export interface ViewerOptions {
@@ -18,18 +18,21 @@ export interface Viewer {
 }
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
-  const [html, css, javascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
+    readFile(new URL("../../web/audio.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
   let inputAt = 0;
   let lastTick = performance.now();
   let failure: string | null = null;
+  let audioEpoch = 0;
 
-  const pause = () => { paused = true; buttons = []; };
+  const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
+  const pause = () => { paused = true; buttons = []; audioEpoch++; discardAudio(); };
   const status = () => ({
     descriptor: emulator.descriptor,
     rom: emulator.rom,
@@ -37,6 +40,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     paused,
     speed: options.speed,
     error: failure,
+    audioEpoch,
   });
   const json = (response: ServerResponse, value: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json" });
@@ -67,6 +71,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/": [html, "text/html; charset=utf-8"],
         "/style.css": [css, "text/css; charset=utf-8"],
         "/viewer.js": [javascript, "text/javascript; charset=utf-8"],
+        "/audio.js": [audioJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];
@@ -78,6 +83,20 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         const frame = emulator.captureFrame();
         response.writeHead(200, { "Content-Type": "application/octet-stream", "X-Frame-Number": String(frame.number) });
         response.end(frame.pixels);
+      } else if (path === "/api/audio" && hasAudio(emulator)) {
+        const audio = emulator.drainAudio();
+        const data = Buffer.allocUnsafe(paused ? 0 : audio.samples.byteLength);
+        for (let index = 0; index < data.length / 4; index++) data.writeFloatLE(audio.samples[index]!, index * 4);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "X-Audio-Format": "f32le",
+          "X-Audio-Sample-Rate": String(audio.sampleRate),
+          "X-Audio-Channels": String(audio.channels),
+          "X-Audio-Epoch": String(audioEpoch),
+          "X-Audio-Paused": String(paused),
+          "X-Audio-Speed": String(options.speed),
+        });
+        response.end(data);
       } else if (path === "/api/screenshot") {
         response.writeHead(200, { "Content-Type": "image/png", "Content-Disposition": 'attachment; filename="screenshot.png"' });
         response.end(encodePng(emulator.captureFrame()));
@@ -113,6 +132,8 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       pause();
     } else if (path === "/api/resume") {
       failure = null;
+      audioEpoch++;
+      discardAudio();
       lastTick = performance.now();
       paused = false;
     } else if (path === "/api/step") {

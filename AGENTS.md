@@ -24,7 +24,9 @@ useful state to Jev. This project must keep such knowledge outside its core.
 
 The first emulation milestone uses strict TypeScript, Node.js 22.18+, and the
 pinned `serverboy` 0.0.7 backend. It includes a console registry, Game Boy adapter,
-bounded headless runner, local manual viewer, PNG captures, and save states.
+bounded headless runner, local manual viewer with stereo audio, PNG captures,
+and save states. Audio is an optional `AudioSource` capability. Keep its queues
+bounded and clear pending playback on pause, reset, restore, and tab hiding.
 Jev decisions, observation interpretation, objectives, and game profiles remain
 future work. No Git repository has been initialized locally.
 

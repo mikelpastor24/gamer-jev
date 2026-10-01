@@ -6,7 +6,7 @@ export interface EmulatorDescriptor {
   readonly buttons: readonly string[];
   readonly screen: { readonly width: number; readonly height: number };
   readonly framesPerSecond: number;
-  readonly capabilities: { readonly saveState: boolean; readonly readMemory: boolean };
+  readonly capabilities: { readonly saveState: boolean; readonly readMemory: boolean; readonly audio: boolean };
 }
 
 export interface RomInfo {
@@ -54,6 +54,22 @@ export interface Emulator {
 /** Optional capability: profiles receive copies, never mutable emulator memory. */
 export interface MemoryReader {
   readMemory(address: number, length: number): Uint8Array;
+}
+
+export interface AudioChunk {
+  readonly sampleRate: number;
+  readonly channels: 1 | 2;
+  /** Owned, interleaved PCM samples in the range [-1, 1]. */
+  readonly samples: Float32Array;
+}
+
+/** Optional capability; draining removes samples already delivered to a viewer. */
+export interface AudioSource {
+  drainAudio(): AudioChunk;
+}
+
+export function hasAudio(emulator: Emulator): emulator is Emulator & AudioSource {
+  return emulator.descriptor.capabilities.audio && "drainAudio" in emulator && typeof emulator.drainAudio === "function";
 }
 
 export const MAX_ACTION_FRAMES = 600;

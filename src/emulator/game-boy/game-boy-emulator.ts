@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Emulator, EmulatorAction, EmulatorDescriptor, EmulatorState, Frame, MemoryReader, RomInfo } from "../../core/emulator.js";
+import type { AudioChunk, AudioSource, Emulator, EmulatorAction, EmulatorDescriptor, EmulatorState, Frame, MemoryReader, RomInfo } from "../../core/emulator.js";
 import { validateAction } from "../../core/emulator.js";
 import { GAME_BOY_FPS, ServerboyBridge, validateSnapshot } from "./serverboy.js";
 
@@ -11,12 +11,12 @@ export const GAME_BOY_DESCRIPTOR: EmulatorDescriptor = Object.freeze({
   buttons: Object.freeze(["UP", "DOWN", "LEFT", "RIGHT", "A", "B", "START", "SELECT"]),
   screen: Object.freeze({ width: 160, height: 144 }),
   framesPerSecond: GAME_BOY_FPS,
-  capabilities: Object.freeze({ saveState: true, readMemory: true }),
+  capabilities: Object.freeze({ saveState: true, readMemory: true, audio: true }),
 });
 
 const ROM_BANKS = new Map([[0, 2], [1, 4], [2, 8], [3, 16], [4, 32], [5, 64], [6, 128], [7, 256], [8, 512], [0x52, 72], [0x53, 80], [0x54, 96]]);
 
-export class GameBoyEmulator implements Emulator, MemoryReader {
+export class GameBoyEmulator implements Emulator, MemoryReader, AudioSource {
   readonly descriptor = GAME_BOY_DESCRIPTOR;
   readonly rom: RomInfo;
   private readonly romBytes: Buffer;
@@ -59,6 +59,11 @@ export class GameBoyEmulator implements Emulator, MemoryReader {
     const pixels = this.bridge.screen();
     if (pixels.length !== 160 * 144 * 4) throw new Error("The backend returned an invalid RGBA frame.");
     return { number: this.frames, width: 160, height: 144, format: "rgba8888", pixels };
+  }
+
+  drainAudio(): AudioChunk {
+    this.assertActive();
+    return this.bridge.drainAudio();
   }
 
   readMemory(address: number, length: number): Uint8Array {

@@ -1,4 +1,4 @@
-/** Original, synthetic ROM: a checkerboard that scrolls while directions are held.
+/** Original, synthetic ROM: a scrolling checkerboard with a 440 Hz test tone.
  * No boot logo or third-party game assets are included. The emulator skips boot.
  */
 export function createDemoRom(): Uint8Array {
@@ -15,6 +15,11 @@ export function createDemoRom(): Uint8Array {
   const jump = (opcode: number, target: number) => emit(opcode, target & 0xff, target >> 8);
 
   emit(0xf3, 0x31, 0xfe, 0xff); // DI; LD SP,$FFFE
+  // Reset the APU and play a steady square wave on pulse channel 1, in stereo.
+  for (const [register, value] of [[0x26, 0x00], [0x26, 0x80], [0x24, 0x77], [0x25, 0x11],
+    [0x10, 0x00], [0x11, 0x80], [0x12, 0xf0], [0x13, 0xd6], [0x14, 0x86]]) {
+    emit(0x3e, value!, 0xe0, register!);
+  }
   const waitForVBlank = address();
   emit(0xf0, 0x44, 0xfe, 0x90); // LDH A,[$FF44]; CP 144
   jump(0xda, waitForVBlank); // JP C,waitForVBlank

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Gamer Jev — Emulator</title>
     <link rel="stylesheet" href="/style.css">
-    <script src="/viewer.js" defer></script>
+    <script src="/viewer.js" type="module"></script>
   </head>
   <body>
     <main>
@@ -36,6 +36,11 @@
             <div><dt>Speed</dt><dd id="speed">1×</dd></div>
             <div><dt>Resolution</dt><dd id="resolution">160 × 144</dd></div>
           </dl>
+          <div class="audio-controls">
+            <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
+            <label for="volume">Volume <output id="volume-value">35%</output></label>
+            <input id="volume" type="range" min="0" max="100" value="35" aria-label="Game audio volume">
+          </div>
           <hr>
           <p class="eyebrow">CHECKPOINT</p>
           <p class="description">Save the current session to continue later.</p>

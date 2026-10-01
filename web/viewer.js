@@ -1,3 +1,5 @@
+import { AudioPlayer } from "./audio.js";
+
 const canvas = document.querySelector("#screen");
 const context = canvas.getContext("2d");
 const keyMap = { ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", KeyZ: "A", KeyX: "B", Enter: "START", ShiftLeft: "SELECT", ShiftRight: "SELECT" };
@@ -8,6 +10,8 @@ let paused = false;
 let inputPending = false;
 let initialized = false;
 let lastStatusAt = 0;
+const audio = new AudioPlayer();
+let audioSupported = false;
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
@@ -51,6 +55,10 @@ function clearInput() {
 function renderStatus(status) {
   if (!initialized) {
     supported = status.descriptor.buttons;
+    audioSupported = status.descriptor.capabilities.audio === true;
+    document.querySelector("#sound").disabled = !audioSupported;
+    document.querySelector("#volume").disabled = !audioSupported;
+    if (!audioSupported) document.querySelector("#sound").textContent = "Audio unavailable";
     canvas.width = status.descriptor.screen.width;
     canvas.height = status.descriptor.screen.height;
     document.querySelector("#game-title").textContent = status.rom.title;
@@ -76,6 +84,7 @@ function renderStatus(status) {
     initialized = true;
   }
   paused = status.paused;
+  audio.setPaused(paused);
   document.querySelector("#run-state").textContent = status.error ? "Error" : paused ? "Paused" : "Running";
   document.querySelector("#toggle").textContent = paused ? "Resume" : "Pause";
   document.querySelector("#frame-number").textContent = status.frame.toLocaleString("en-US");
@@ -85,6 +94,7 @@ function renderStatus(status) {
 
 async function command(path, success) {
   clearInput();
+  if (path !== "/api/save") audio.reset();
   try { renderStatus(await request(path, {})); if (success) message(success); }
   catch (error) { message(error.message, true); }
 }
@@ -94,6 +104,21 @@ document.querySelector("#step").addEventListener("click", () => command("/api/st
 document.querySelector("#save").addEventListener("click", () => command("/api/save", "Checkpoint saved locally."));
 document.querySelector("#load").addEventListener("click", () => command("/api/load", "Checkpoint restored. Resume when ready."));
 document.querySelector("#reset").addEventListener("click", () => command("/api/reset", "Cartridge reset. Resume when ready."));
+document.querySelector("#sound").addEventListener("click", async () => {
+  const button = document.querySelector("#sound");
+  button.disabled = true;
+  try {
+    if (audio.enabled) audio.mute();
+    else await audio.enable();
+    button.textContent = audio.enabled ? "Mute sound" : "Enable sound";
+    button.setAttribute("aria-pressed", String(audio.enabled));
+  } catch (error) { message(error.message, true); }
+  finally { button.disabled = false; }
+});
+document.querySelector("#volume").addEventListener("input", (event) => {
+  audio.setVolume(Number(event.target.value) / 100);
+  document.querySelector("#volume-value").textContent = `${event.target.value}%`;
+});
 window.addEventListener("keydown", (event) => {
   if (!supported.includes(keyMap[event.code])) return;
   event.preventDefault(); keyboard.add(event.code); void sendInput();
@@ -104,6 +129,8 @@ window.addEventListener("keyup", (event) => {
 });
 window.addEventListener("blur", clearInput);
 document.addEventListener("visibilitychange", () => { if (document.hidden) clearInput(); });
+document.addEventListener("visibilitychange", () => audio.reset());
+window.addEventListener("pagehide", () => audio.mute());
 setInterval(() => { if (!document.hidden) void sendInput(); }, 100);
 
 async function poll() {
@@ -121,3 +148,24 @@ async function poll() {
   setTimeout(poll, document.hidden ? 500 : 33);
 }
 void poll();
+
+async function pollAudio() {
+  if (audioSupported && audio.enabled && !document.hidden) {
+    const generation = audio.generation;
+    try {
+      const response = await fetch("/api/audio");
+      if (!response.ok || response.headers.get("X-Audio-Format") !== "f32le") throw new Error("Could not read game audio.");
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength % 4 !== 0) throw new Error("Invalid game audio data.");
+      const samples = new Float32Array(bytes.byteLength / 4);
+      const view = new DataView(bytes);
+      for (let index = 0; index < samples.length; index++) samples[index] = view.getFloat32(index * 4, true);
+      if (generation === audio.generation) audio.play(samples,
+        Number(response.headers.get("X-Audio-Sample-Rate")), Number(response.headers.get("X-Audio-Channels")),
+        Number(response.headers.get("X-Audio-Speed")), Number(response.headers.get("X-Audio-Epoch")),
+        response.headers.get("X-Audio-Paused") === "true");
+    } catch (error) { audio.reset(); message(error.message, true); }
+  }
+  setTimeout(pollAudio, 40);
+}
+void pollAudio();
