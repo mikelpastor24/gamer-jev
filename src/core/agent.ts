@@ -1,5 +1,8 @@
 import type { Frame } from "./emulator.js";
 
+export type DecisionProviderId = "typesafe" | "gateway" | "mock";
+export type VisionProviderId = "none" | "gateway" | "mock";
+
 export interface Objectives {
   readonly goal: string;
   readonly constraints: readonly string[];

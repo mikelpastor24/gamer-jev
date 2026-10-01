@@ -8,8 +8,9 @@ of an emulated game. Inspired by
 Implemented: Game Boy emulation, stereo audio, a local viewer, checkpoints,
 and a bounded agent loop with structured game state, Jev decisions, and optional
 visual perception. Game readers use interchangeable strategies selected by
-console and ROM hash. Live mode uses one Vercel AI Gateway key; manual and mock
-modes need no credentials. Gameplay competence still needs validation with real games.
+console and ROM hash. Jev can use direct TypeSafe or Vercel AI Gateway; vision
+is configured independently. Manual and fully mocked sessions need no credentials.
+Gameplay competence still needs validation with real games.
 
 ## Requirements
 
@@ -46,52 +47,86 @@ by Git. Do not add commercial ROMs or generated gameplay artifacts to the repo.
 
 ## Let Jev play
 
-Create a [Vercel AI Gateway API key](https://vercel.com/docs/ai-gateway/getting-started),
-copy `.env.example` to `.env`, and replace the key placeholder:
+Choose the decision provider with `--agent` and the visual provider with
+`--vision`. Every combination is supported:
+
+| Component | Option | Credential |
+| --- | --- | --- |
+| Jev directly through TypeSafe | `--agent typesafe` | `TYPESAFE_API_KEY` |
+| Jev through Vercel AI Gateway | `--agent gateway` | `AI_GATEWAY_API_KEY` |
+| Predetermined local decisions | `--agent mock` | None |
+| No vision; requires a compatible memory reader | `--vision none` | None |
+| Vision through Vercel AI Gateway | `--vision gateway` | `AI_GATEWAY_API_KEY` |
+| Fixed local visual descriptions for testing | `--vision mock` | None |
+
+Omit `--agent` for manual play; `--profile` can still enable local state inspection.
+Copy `.env.example` to `.env` and set only credentials for the providers you
+select. Obtain a direct key from the [TypeSafe console](https://console.typesafe.ai/)
+or a [Vercel AI Gateway key](https://vercel.com/docs/ai-gateway/getting-started).
+The two credentials are not interchangeable. If both models use Gateway, one
+Gateway key authenticates both.
+
+For example, use only Jev directly with the demo's automatically selected reader:
 
 ```dotenv
-AI_GATEWAY_API_KEY=your-vercel-ai-gateway-key
+TYPESAFE_API_KEY=your-typesafe-api-key
 ```
 
-Choose how to play:
-
-| Mode | Configuration | Model calls |
-| --- | --- | --- |
-| Manual | Omit `--agent`; optionally select `--profile` for state inspection | None |
-| Jev with game state | `--agent gateway --observation state` and a compatible reader | Jev only |
-| Jev with vision | `--agent gateway --observation vision`; a reader is optional | Jev and vision |
+```sh
+npm start -- --demo --agent typesafe --vision none --goal "Increase scrollX"
+```
 
 For a ROM without a reader, start with vision:
 
 ```sh
-npm start -- --rom "roms/my-game.gb" --agent gateway --observation vision --goal "Start the game and complete the first level"
+npm start -- --rom "roms/my-game.gb" --agent gateway --vision gateway --goal "Start the game and complete the first level"
+```
+
+Or use direct TypeSafe decisions with Gateway vision. This combination needs
+both keys:
+
+```sh
+npm start -- --rom "roms/my-game.gb" --agent typesafe --vision gateway --goal "Start the game and complete the first level"
 ```
 
 Open the printed viewer URL to watch the session. **Pause** cancels pending
 requests and discards their decisions. **Resume** requests a fresh observation.
-The panel shows the objective, observation, chosen input, confidence
-when reported, decision count, request count, and stop reason. Manual button
+The panel shows each selected provider, the objective, observation, chosen input,
+confidence when reported, decision count, request count, and stop reason. Manual button
 input is disabled during agent sessions. Checkpoints and screenshots still work.
 
-The default observation mode is `vision`, preserving existing commands. In that
-mode, no game-specific reader is required. The default vision model,
+Existing commands keep their defaults: a live agent uses Gateway vision, and
+a mock agent uses mock vision, unless `--vision` is specified. The compatibility
+option `--observation state` means `--vision none`; `--observation vision` enables
+the default visual provider. Conflicting `--observation` and `--vision` options
+are rejected. With vision, no game-specific reader is required. The default
+Gateway vision model,
 `google/gemini-2.5-flash`, describes the current screenshot and compares it with
-the previous observation. Jev, `typesafe-ai/jev`, receives structured game state,
+the previous observation. Jev receives structured game state,
 any visual description, objectives, recent action results, repeated-screen
 evidence, and the current available actions. A compatible reader supplies
 semantic state and filters those actions; otherwise vision uses generic
 controller actions and explicitly labeled emulator metadata. Jev selects the
 action; vision only observes and cannot overwrite memory-derived state or actions.
-When enabled, both models use the same Gateway key and account credits. Optional `.env` settings
-`VISION_MODEL` and `JEV_MODEL` change the configured Gateway model IDs; the
-vision model must support image input and Jev must remain a TypeSafe model.
-`VISION_MODEL` is not validated or used in state-only mode.
+Each remote provider uses its selected service's credentials and account credits.
+Model settings are independent:
+
+| Environment setting | Used by | Default |
+| --- | --- | --- |
+| `TYPESAFE_MODEL` | Direct TypeSafe decisions | `jev-latest` |
+| `JEV_MODEL` | Gateway decisions | `typesafe-ai/jev` |
+| `VISION_MODEL` | Gateway vision | `google/gemini-2.5-flash` |
+
+Only selected providers validate their credentials and model settings. Direct
+TypeSafe ignores `JEV_MODEL`; disabled and mock vision ignore `VISION_MODEL`.
+Direct TypeSafe records the actual model ID returned by the API. Gateway model
+names use its provider/model format, and the visual model must accept images.
 
 The original demo has an automatically selected memory reader. To use only Jev:
 
 ```sh
-npm start -- --demo --agent gateway --observation state --goal "Increase scrollX"
-npm start -- --rom "roms/my-game.gb" --profile "my-reader" --agent gateway --observation state --goal "Complete the first level"
+npm start -- --demo --agent gateway --vision none --goal "Increase scrollX"
+npm start -- --rom "roms/my-game.gb" --profile "my-reader" --agent typesafe --vision none --goal "Complete the first level"
 ```
 
 State-only mode requires a compatible reader. Arbitrary games have different
@@ -106,8 +141,11 @@ descriptions, and available actions. `GET /api/game-state` exposes the same
 read-only snapshot. This makes no model calls and does not advance the emulator.
 
 Jev accepts text-based state, so screenshots go to a separate visual model.
-The integration uses Gateway's documented [evaluation HTTP API](https://vercel.com/docs/ai-gateway/modalities/evaluation)
-and [chat completions API](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions).
+Direct decisions use TypeSafe's documented [System One API](https://docs.typesafe.ai/api).
+Gateway decisions use its [evaluation HTTP API](https://vercel.com/docs/ai-gateway/modalities/evaluation),
+and Gateway vision uses its [chat completions API](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions).
+The adapters normalize the different confidence and token-usage fields into the
+same decision contract and validate selected actions and probability distributions.
 Native Node `fetch` avoids an additional SDK dependency; Apache-2.0 SDK code
 would be incompatible with the emulator's GPL-2.0-only license.
 
@@ -127,9 +165,17 @@ npm run agent:demo -- --headless --decisions 10 --screenshot "output/agent-demo.
 
 The mock decision provider cycles through predetermined inputs. The demo still
 uses its real local memory reader and state-dependent action availability. Mock
-decisions do not demonstrate Jev's gameplay ability. Add `--observation vision`
-to the demo command to test composition with a mock visual provider, still
-without keys or API calls.
+decisions do not demonstrate Jev's gameplay ability. To test composition with
+mock vision, still without keys or API calls:
+
+```sh
+npm start -- --demo --agent mock --vision mock --goal "Inspect the screen"
+```
+
+Mixing providers is useful for testing each layer separately. A mock decision
+provider with `--vision gateway` makes real, potentially billable vision requests;
+a live Jev provider with `--vision mock` still makes Jev requests. Mock vision
+returns fixed descriptions and does not interpret the screenshots.
 
 ### Objectives and limits
 
@@ -165,12 +211,13 @@ Milestones and a model-selected `stop` are not independently verified evidence
 of completion. A future game profile can supply explicit progress checks.
 
 Each agent run writes a local JSONL record under `logs/sessions/`: objectives,
-candidate actions, observations, model choices and usage, actual frame ranges,
-interrupted actions, and stop reasons. API keys and provider error bodies are
+selected provider IDs, candidate actions, observations, model choices and usage,
+actual frame ranges, interrupted actions, and stop reasons. API keys and provider error bodies are
 excluded. Records may contain game text and user objectives; keep them local.
-Live state-only mode sends structured state to Jev. Vision mode additionally
-sends screenshots to the visual provider. ROM binaries and checkpoints stay on
-your machine. Reader-specific memory meanings are not guessed for unsupported ROMs.
+Live state-only mode sends structured state to the selected Jev service. Gateway
+vision additionally sends screenshots to its visual model; mock vision runs
+locally. ROM binaries and checkpoints stay on your machine. Reader-specific
+memory meanings are not guessed for unsupported ROMs.
 
 ## Manual viewer
 
@@ -294,7 +341,9 @@ buttons and can add appropriate keyboard bindings.
 Observation, vision, and decision providers implement separate contracts in
 `src/core/agent.ts`. `src/jev/` owns decision evaluation, `src/vision/` owns image
 description, and `src/observation/` composes local state with optional visual
-evidence. Shared HTTP transport and request limits live in `src/providers/`.
+evidence. Independent factories, bounded HTTP transport, and shared request
+limits live in `src/providers/`. TypeSafe and Gateway implement the same
+decision contract without exposing their keys to readers, the runner, or the viewer.
 Game strategies implement `src/core/game-reader.ts` and register under
 `src/profiles/`. Keep game names, memory addresses, and progress rules outside
 the core. See [the reader extension guide](docs/game-readers.md) for the contract,
@@ -330,9 +379,11 @@ node dist/cli.js --demo --headless --frames 120
 
 Tests execute the real emulator against the original synthetic ROM, validate
 action safety and save-state continuation, and exercise the local HTTP viewer,
-agent lifecycle, request budgets, and Gateway request/response validation,
+agent lifecycle, shared request budgets, TypeSafe and Gateway request/response validation,
 memory decoding, reader compatibility, state-dependent actions, and independent
-state-only and vision-assisted observation paths.
+state-only and vision-assisted observation paths. Provider tests cover all nine
+decision/vision combinations, separate credentials, native confidence and token
+usage, cancellation, overload retries, and malformed responses.
 They require no commercial ROM, network API, credentials, or paid model calls.
 The compiled CLI reads the static viewer from `web/`; keep that directory
 alongside `dist/` when moving a build.

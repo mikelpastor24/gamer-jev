@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ActionRecord, AgentAction, Decision, DecisionProvider, GameState, Objectives, ObservationProvider } from "../core/agent.js";
+import type { ActionRecord, AgentAction, Decision, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
 import type { Emulator, Frame } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
@@ -7,7 +7,8 @@ import { AgentFailure, RequestBudget } from "../providers/requests.js";
 export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
-  readonly mode: "gateway" | "mock";
+  readonly mode: DecisionProviderId;
+  readonly visionProvider?: VisionProviderId;
   readonly objectives: Objectives;
   readonly observer: ObservationProvider;
   readonly decider: DecisionProvider;
@@ -37,6 +38,7 @@ export class AgentSession {
   private outputTokens = 0;
   private reason: string | null = null;
   private readonly actions: readonly AgentAction[];
+  private readonly visionProvider: VisionProviderId;
   private readonly deadline: number;
   private readonly deadlineTimer: ReturnType<typeof setTimeout>;
 
@@ -44,10 +46,12 @@ export class AgentSession {
     if (!Number.isSafeInteger(options.maxDecisions) || options.maxDecisions < 1 ||
         !Number.isSafeInteger(options.maxSeconds) || options.maxSeconds < 1 || options.maxSeconds > 86400) throw new Error("Invalid agent session limits.");
     this.actions = controllerActions(emulator.descriptor.buttons, options.actionFrames);
+    this.visionProvider = options.visionProvider ?? (options.observer.kind === "state" ? "none" : options.mode === "mock" ? "mock" : "gateway");
     this.deadline = Date.now() + options.maxSeconds * 1000;
     this.deadlineTimer = setTimeout(() => this.stop("Session time limit reached."), options.maxSeconds * 1000);
     this.deadlineTimer.unref();
-    this.record({ type: "session", mode: options.mode, objectives: options.objectives, romSha256: emulator.rom.sha256,
+    this.record({ type: "session", mode: options.mode, visionProvider: this.visionProvider,
+      observationMode: options.observer.kind ?? "custom", objectives: options.objectives, romSha256: emulator.rom.sha256,
       console: emulator.descriptor.consoleId, controllerActions: this.actions, limits: {
         decisions: options.maxDecisions, seconds: options.maxSeconds, requests: options.budget.limits,
       } });
@@ -56,7 +60,7 @@ export class AgentSession {
   get terminal(): boolean { return this.state === "stopped" || this.state === "error"; }
   get advancing(): boolean { return this.state === "acting" || this.state === "idle"; }
   get snapshot() {
-    return { mode: this.options.mode, state: this.state, goal: this.options.objectives.goal,
+    return { mode: this.options.mode, visionProvider: this.visionProvider, state: this.state, goal: this.options.objectives.goal,
       observationMode: this.options.observer.kind ?? "custom", gameState: this.gameState ?? null,
       decisions: this.decisions, maxDecisions: this.options.maxDecisions,
       requests: this.options.budget.requests, maxRequests: this.options.budget.limits.maxRequests,

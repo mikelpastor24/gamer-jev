@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import type { DecisionProviderId, VisionProviderId } from "../core/agent.js";
 
 export interface CliOptions {
   help: boolean;
@@ -16,7 +17,8 @@ export interface CliOptions {
   loadPath: string | undefined;
   savePath: string | undefined;
   screenshotPath: string | undefined;
-  agent: "gateway" | "mock" | undefined;
+  agent: DecisionProviderId | undefined;
+  visionProvider: VisionProviderId;
   observationMode: "state" | "vision";
   profile: string | undefined;
   goal: string | undefined;
@@ -53,6 +55,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     save: { type: "string" },
     screenshot: { type: "string" },
     agent: { type: "string" },
+    vision: { type: "string" },
     observation: { type: "string" },
     profile: { type: "string" },
     goal: { type: "string" },
@@ -74,16 +77,22 @@ export function parseCliOptions(args: string[]): CliOptions {
     }
     if (values.headless && values.paused) throw new Error("--paused is only available in the viewer.");
     if (!values.headless && values.screenshot) throw new Error("--screenshot requires --headless; the viewer has a screenshot button.");
-    if (values.agent !== undefined && values.agent !== "gateway" && values.agent !== "mock") throw new Error("--agent must be gateway or mock.");
+    if (values.agent !== undefined && values.agent !== "typesafe" && values.agent !== "gateway" && values.agent !== "mock") throw new Error("--agent must be typesafe, gateway, or mock.");
+    if (values.vision !== undefined && values.vision !== "none" && values.vision !== "gateway" && values.vision !== "mock") throw new Error("--vision must be none, gateway, or mock.");
     if (values.observation !== undefined && values.observation !== "state" && values.observation !== "vision") throw new Error("--observation must be state or vision.");
     if (!values.agent && values.observation !== undefined) throw new Error("--observation requires an agent. --profile can inspect game state in manual mode.");
+    if (!values.agent && values.vision !== undefined) throw new Error("--vision requires an agent. Omit --agent for manual play.");
+    if (values.vision !== undefined && values.observation !== undefined &&
+        ((values.vision === "none") !== (values.observation === "state"))) throw new Error("--vision conflicts with --observation. Use none with state, or a vision provider with vision.");
     if (values.profile !== undefined && !values.profile.trim()) throw new Error("--profile requires a registered ID or JSON file path.");
     if (values.agent && Boolean(values.goal) === Boolean(values.objectives)) throw new Error("Agent mode requires exactly one of --goal <text> or --objectives <path>.");
     if (values.agent && values.buttons !== undefined) throw new Error("--buttons cannot be combined with agent mode.");
     if (!values.agent && (values.goal !== undefined || values.objectives !== undefined || args.some((arg) => /^--(decisions|requests|max-seconds|action-frames)(=|$)/.test(arg)))) {
-      throw new Error("Objectives and agent limits require --agent gateway or --agent mock.");
+      throw new Error("Objectives and agent limits require --agent typesafe, --agent gateway, or --agent mock.");
     }
   }
+  const visionProvider = (values.vision ?? (values.observation === "state" || !values.agent ? "none" :
+    values.agent === "mock" ? "mock" : "gateway")) as VisionProviderId;
   return {
     help: values.help ?? false,
     listConsoles: values["list-consoles"] ?? false,
@@ -100,8 +109,9 @@ export function parseCliOptions(args: string[]): CliOptions {
     loadPath: values.load,
     savePath: values.save,
     screenshotPath: values.screenshot,
-    agent: values.agent as "gateway" | "mock" | undefined,
-    observationMode: values.observation as "state" | "vision" | undefined ?? "vision",
+    agent: values.agent as DecisionProviderId | undefined,
+    visionProvider,
+    observationMode: visionProvider === "none" ? "state" : "vision",
     profile: values.profile,
     goal: values.goal,
     objectivesPath: values.objectives,
@@ -129,8 +139,10 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --load <path>        Restore a compatible checkpoint before running
   --save <path>        Checkpoint destination; saved at exit and from the viewer
   --screenshot <path>  Write the final headless frame as PNG
-  --agent <provider>   Jev through gateway, or offline mock (omit for manual play)
-  --observation <id>   state for memory only, or vision (default) for visual evidence
+  --agent <provider>   typesafe for direct Jev, gateway for Vercel, or mock (omit for manual)
+  --vision <provider>  none, gateway, or mock; independent of --agent
+                      Default: mock with a mock agent, otherwise gateway
+  --observation <id>   Compatibility option: state disables vision; vision enables it
   --profile <id/path>  Registered game reader or a JSON memory profile
   --goal <text>        Primary objective for the agent
   --objectives <path>  JSON objectives instead of --goal

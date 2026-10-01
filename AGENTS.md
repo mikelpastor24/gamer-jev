@@ -28,7 +28,9 @@ bounded headless runner, local manual viewer with stereo audio, PNG captures,
 and save states. Audio is an optional `AudioSource` capability. Keep its queues
 bounded and clear pending playback on pause, reset, restore, and tab hiding.
 Jev decisions in `src/jev/` are independent of optional vision in `src/vision/`.
-Both use a neutral Gateway transport and budget in `src/providers/`. Observation
+Decisions can use direct TypeSafe, Vercel AI Gateway, or mock; vision independently
+uses Gateway, mock, or is disabled. They share bounded JSON transport and a request
+budget in `src/providers/`. Provider factories read only their own settings. Observation
 composition lives in `src/observation/`. A deterministic mock
 works offline. Objectives, bounded sessions, recent history, JSONL records,
 viewer inspection, and headless agent execution are implemented. Game readers
@@ -123,9 +125,14 @@ decisions around selecting from explicitly supplied actions.
   Stop or pause cleanly when credentials, provider responses, or limits fail.
 - Vision and Jev share the request budget. Count every application HTTP attempt,
   including failures and cancelled requests. Use the documented Gateway HTTP
-  endpoints and validate responses without adding SDK dependencies. Invalidate pending
+  and direct TypeSafe HTTP endpoints and validate their different response formats
+  without adding SDK dependencies. Keep credentials, model IDs, native confidence,
+  and token usage mapping specific to each adapter. Invalidate pending
   observations and decisions on pause, reset, restore, and shutdown.
 - Provide a mock mode that works without credentials, network calls, or API costs.
+- Keep `--agent` and `--vision` independent. A mock decision provider can still
+  use remote vision; report that combination accurately in the viewer and logs.
+  Preserve `--observation state|vision` compatibility and reject conflicting flags.
 
 ## Objectives and Session Records
 

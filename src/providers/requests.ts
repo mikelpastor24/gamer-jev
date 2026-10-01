@@ -23,7 +23,7 @@ export class RequestBudget {
     if (limits.retries > 2) throw new Error("At most two retries are supported.");
   }
 
-  async run<T>(kind: "Vision" | "Jev", signal: AbortSignal, request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async run<T>(kind: "Vision" | "Jev", signal: AbortSignal, request: (signal: AbortSignal) => Promise<T>, provider: "gateway" | "typesafe" = "gateway"): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       signal.throwIfAborted();
       if (this.requests >= this.limits.maxRequests) throw new AgentFailure("Model request limit reached.");
@@ -48,7 +48,9 @@ export class RequestBudget {
           continue;
         }
         // Never forward transport errors: they can contain credentials or response bodies.
-        if (status === 401 || status === 403) throw new AgentFailure(`${kind} authentication failed. Check AI_GATEWAY_API_KEY and Gateway access.`);
+        if (status === 401 || status === 403) throw new AgentFailure(provider === "typesafe" ?
+          `${kind} authentication failed. Check TYPESAFE_API_KEY and TypeSafe access.` :
+          `${kind} authentication failed. Check AI_GATEWAY_API_KEY and Gateway access.`);
         throw new AgentFailure(`${kind} request failed${typeof status === "number" ? ` (HTTP ${status})` : ""}. Check provider access, credits, model availability, and network connectivity.`);
       }
     }

@@ -10,11 +10,8 @@ import { createDefaultRegistry } from "./emulator/registry.js";
 import { runHeadless } from "./runner/headless.js";
 import { startViewer } from "./server/viewer.js";
 import { loadObjectives, parseObjectives } from "./config/objectives.js";
-import { createGatewayDecisionProvider } from "./jev/gateway.js";
-import { createMockDecisionProvider } from "./jev/mock.js";
 import { RequestBudget } from "./providers/requests.js";
-import { createGatewayVisionProvider } from "./vision/gateway.js";
-import { createMockVisionProvider } from "./vision/mock.js";
+import { createDecisionProvider, createVisionProvider } from "./providers/factory.js";
 import { createEmulatorStateProvider, createStateObserver } from "./observation/state.js";
 import { withVision } from "./observation/combined.js";
 import { createDefaultGameReaderRegistry } from "./profiles/default-registry.js";
@@ -58,27 +55,27 @@ async function main(): Promise<void> {
     gameState.read(emulator.captureFrame()); // Validate the local reader before any provider calls.
     if (profileState) console.log(`Game reader: ${profileState.id}`);
     if (options.agent) {
-      if (options.observationMode === "state" && !profileState) throw new Error("Memory-only agent mode requires a compatible game reader. Supply --profile <id/path>, or use --observation vision.");
-      if (options.agent === "gateway" && existsSync(".env")) loadEnvFile(".env");
+      if (options.observationMode === "state" && !profileState) throw new Error("Memory-only agent mode requires a compatible game reader. Supply --profile <id/path>, or use --vision gateway.");
+      if ((options.agent !== "mock" || options.visionProvider === "gateway") && existsSync(".env")) loadEnvFile(".env");
       const objectives = options.objectivesPath ? await loadObjectives(options.objectivesPath) : parseObjectives({ goal: options.goal });
       const budget = new RequestBudget({ maxRequests: options.requests, timeoutMs: 20_000, intervalMs: 250, retries: 1 });
-      const credentials = { apiKey: process.env.AI_GATEWAY_API_KEY ?? "", budget };
-      const decider = options.agent === "mock" ? createMockDecisionProvider() :
-        createGatewayDecisionProvider({ ...credentials, model: process.env.JEV_MODEL ?? "typesafe-ai/jev" });
+      const settings = { environment: process.env, budget };
+      const decider = createDecisionProvider(options.agent, settings);
+      const vision = createVisionProvider(options.visionProvider, settings);
       const stateObserver = createStateObserver(gameState);
-      const observer = options.observationMode === "state" ? stateObserver : withVision(stateObserver,
-        options.agent === "mock" ? createMockVisionProvider() : createGatewayVisionProvider({ ...credentials,
-          model: process.env.VISION_MODEL ?? "google/gemini-2.5-flash" }));
+      const observer = vision ? withVision(stateObserver, vision) : stateObserver;
       const logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
       log = openSessionLog(logPath);
-      session = new AgentSession(emulator, { observer, decider, budget, mode: options.agent, objectives,
+      session = new AgentSession(emulator, { observer, decider, budget, mode: options.agent, visionProvider: options.visionProvider, objectives,
         actionFrames: options.actionFrames, maxDecisions: options.decisions, maxSeconds: options.maxSeconds,
         record: log.record,
       });
-      console.log(`Agent: ${options.agent}. Observation: ${options.observationMode}. Goal: ${objectives.goal}`);
+      console.log(`Agent: ${options.agent}. Vision: ${options.visionProvider}. Observation: ${options.observationMode}. Goal: ${objectives.goal}`);
       console.log(`Session record: ${logPath}`);
-      if (options.agent === "gateway") console.log(options.observationMode === "vision" ? "Screenshots go to the vision provider; structured state and observations go to Jev through AI Gateway." : "Structured game state goes to Jev. No vision model is initialized or called.");
-      else console.log("Offline mock decisions are predetermined and make no API calls. Local game-state readers still run.");
+      console.log(options.agent === "mock" ? "Decisions use predetermined mock inputs without Jev API calls." :
+        `Structured state and observations go to Jev ${options.agent === "typesafe" ? "directly through TypeSafe" : "through Vercel AI Gateway"}.`);
+      console.log(options.visionProvider === "gateway" ? "Screenshots go to the configured vision model through Vercel AI Gateway." :
+        options.visionProvider === "mock" ? "Vision uses a local mock without API calls." : "Vision is disabled. No screenshots are sent.");
     }
     if (options.headless) {
       const initialFrame = emulator.frameNumber;

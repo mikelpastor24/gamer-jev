@@ -95,11 +95,18 @@ function renderStatus(status) {
   document.querySelector("#game-reader").textContent = status.gameReader === "emulator" ? "Emulator metadata. No semantic game reader is configured." : `Game reader: ${status.gameReader}`;
   if (status.agent) {
     const agent = status.agent;
+    const liveDecisions = agent.mode !== "mock";
+    const liveVision = agent.visionProvider === "gateway";
+    const decisionDestination = agent.mode === "typesafe" ? "TypeSafe" : "Vercel AI Gateway";
     document.querySelector("#agent-panel").hidden = false;
-    document.querySelector("#session-mode").textContent = agent.mode === "mock" ? "Offline mock agent" : agent.observationMode === "state" ? "Jev + game state" : "Jev + vision";
+    document.querySelector("#session-mode").textContent = agent.mode === "mock" ? liveVision ? "Mock decisions + vision" : "Offline mock agent" : agent.observationMode === "state" ? "Jev + game state" : "Jev + vision";
     document.querySelector("#session-intro").textContent = agent.observationMode === "state" ? "Watch the agent read the game state and choose each controller input." : "Watch the agent read game state and visual evidence, then choose each controller input.";
     document.querySelector(".keyboard-hint").textContent = "Controller inputs are managed by the agent. You can pause, inspect, or restore a checkpoint.";
-    document.querySelector("#privacy-note").textContent = agent.mode === "mock" ? "Mock mode runs locally without API calls." : agent.observationMode === "state" ? "Game state goes to Jev. No screenshots are sent." : "Live mode sends screenshots and observations through AI Gateway.";
+    document.querySelector("#privacy-note").textContent = liveVision ?
+      `Screenshots go to vision through Vercel AI Gateway. ${liveDecisions ? `State and observations go to Jev through ${decisionDestination}.` : "Decisions run locally."}` :
+      liveDecisions ? `State and observations go to Jev through ${decisionDestination}. No screenshots are sent.` : "Mock mode runs locally without API calls.";
+    document.querySelector("#agent-provider").textContent = liveDecisions ? agent.mode === "typesafe" ? "TypeSafe" : "Vercel" : "Mock";
+    document.querySelector("#vision-provider").textContent = agent.visionProvider === "none" ? "Disabled" : liveVision ? "Vercel" : "Mock";
     document.querySelector("#agent-goal").textContent = agent.goal;
     document.querySelector("#agent-state").textContent = agent.state;
     document.querySelector("#agent-decisions").textContent = `${agent.decisions} / ${agent.maxDecisions}`;

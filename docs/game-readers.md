@@ -92,12 +92,14 @@ Strategy interface; it does not use a separate decision loop.
 
 ```sh
 npm start -- --demo --profile examples/demo-profile.json
-npm start -- --demo --profile examples/demo-profile.json --agent gateway --observation state --goal "Increase scrollX"
+npm start -- --demo --profile examples/demo-profile.json --agent typesafe --vision none --goal "Increase scrollX"
 ```
 
 The first command enables manual inspection without credentials. The second
-uses only Jev. Supply a Gateway key in `.env` for live decisions, or replace
-`gateway` with `mock` to test offline.
+uses only Jev directly through TypeSafe. Supply `TYPESAFE_API_KEY` in `.env`, or
+replace `typesafe` with `mock` to test offline. Use `--agent gateway` with a
+Gateway key if you prefer Vercel for decisions. Vision is selected independently
+with `--vision none|gateway|mock`; a disabled visual provider requires no key.
 
 The schema requires `schemaVersion: 1`, `id`, `name`, `consoleId`, an array of
 supported `romSha256` values, and `fields`. Profiles are at most 128 KiB.
