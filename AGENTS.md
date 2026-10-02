@@ -62,6 +62,16 @@ Frame pacing scales its bounded batch with speed, discards provider wait time,
 and resets on speed edits and resume. Speed edits preserve pending agent work,
 action durations, and pause state, and invalidate queued audio on both ends.
 
+Settings → ROMs loads regular .gb/.gbc files from the local roms/ folder, capped
+at 8 MiB and 256 catalog entries. Reject traversal and symlinks. Validate a fresh
+runtime before replacing the current cartridge, save the previous checkpoint,
+cancel stale work, and start the new game paused. Preserve applied agent settings
+and provider choices; reset session counters, timers, history, and inspection.
+`src/runner/game-runtime.ts` owns per-cartridge readers, providers, logs, and
+cleanup. Checkpoints after switching are isolated by console and ROM hash.
+Guard browser commands and inspection against stale game IDs. Never expose
+ROM bytes, absolute catalog paths, or provider credentials through the library.
+
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
 `npm run typecheck`, `npm test`, and `npm run build`, or `npm run check` for all

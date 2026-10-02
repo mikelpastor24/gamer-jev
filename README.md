@@ -322,6 +322,32 @@ values. Panel and field visibility are remembered in this browser, with field
 preferences kept separately for each reader. **Reset layout & fields** restores
 the defaults. These preferences do not alter observations sent to Jev.
 
+Load another cartridge from **Settings → ROMs**: select a file and press
+**Load selected ROM**. The library lists up to 256 regular `.gb` and `.gbc`
+files directly inside the project's `roms/` folder, each at most 8 MiB.
+It refreshes whenever you open its tab. Missing or empty folders show an
+instruction to add your own ROMs. Color-only ROMs remain unsupported; the
+emulator validates the selected cartridge before replacing the current game.
+
+Loading pauses the current session, cancels pending model work, and saves its
+checkpoint. The new game starts from boot, paused, with the matching reader
+selected by exact hash. Press **Resume** to start, or **Settings → Session →
+Restore checkpoint** to continue a previous save for that ROM. Loading never
+makes model requests. Speed and applied agent objectives, constraints,
+milestones, providers, action duration, and ceilings carry over; decision and
+request counters, elapsed time, history, and inspection start fresh. Unapplied
+editor drafts are discarded. Each agent game has its own local JSONL record.
+Memory-only agent sessions reject cartridges without a compatible reader.
+
+Checkpoints after a ROM change use
+`saves/<console>/<rom-sha256>/checkpoint.json`, independently for each ROM.
+An explicit startup `--save` path applies to the initial game. The previous
+game stays loaded and paused if validation or checkpoint saving fails.
+Library loading also works after an agent reaches a session limit; the new
+session uses the currently applied limits. Start the viewer with `npm run demo`
+for manual play, or with your existing agent command, then choose a ROM here.
+ROM bytes and absolute library paths are never returned to the browser.
+
 During agent sessions, **Jev exchange** pairs each decision's **Input** and
 **Response** by request number and emulator frame. The input sections show
 objectives, semantic game state, observations, available actions, recent history,

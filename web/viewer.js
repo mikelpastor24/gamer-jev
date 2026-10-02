@@ -1,6 +1,7 @@
 import { AudioPlayer } from "./audio.js";
 import { createInspector } from "./inspector.js";
 import { createAgentSettingsEditor } from "./agent-settings.js";
+import { createRomLibrary } from "./rom-library.js";
 
 const canvas = document.querySelector("#screen");
 const context = canvas.getContext("2d");
@@ -17,9 +18,12 @@ let audioSupported = false;
 let agentMode = false;
 let playbackSpeed;
 let speedPending = false;
+let gameId;
+let loadingRom = false;
 const speedControl = document.querySelector("#emulation-speed");
 const inspector = createInspector((visible) => { if (!visible) clearInput(); });
-createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
+const agentSettings = createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
+createRomLibrary({ request, message, onLoad(status) { renderStatus(status); } });
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
@@ -33,7 +37,7 @@ function message(text, error = false) {
 
 async function request(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gameId, ...body }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? "Request failed.");
@@ -50,7 +54,7 @@ function heldButtons() {
 }
 
 async function sendInput() {
-  if (!initialized || inputPending || agentMode) return;
+  if (!initialized || inputPending || agentMode || loadingRom) return;
   inputPending = true;
   const buttons = heldButtons();
   document.querySelectorAll("#controller button").forEach((element) => element.classList.toggle("active", buttons.includes(element.dataset.button)));
@@ -65,6 +69,14 @@ function clearInput() {
 }
 
 function renderStatus(status) {
+  if (gameId !== undefined && status.gameId < gameId) return;
+  if (gameId !== undefined && status.gameId !== gameId) {
+    initialized = false; keyboard.clear(); pointers.clear(); audio.reset();
+    inspector.resetGame(); agentSettings.reset(); lastStatusAt = 0;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  gameId = status.gameId;
+  loadingRom = status.loadingRom;
   if (!initialized) {
     supported = status.descriptor.buttons;
     agentMode = status.agent !== null && status.agent !== undefined;
@@ -78,6 +90,8 @@ function renderStatus(status) {
     document.querySelector("#game-title").title = status.rom.title;
     document.querySelector("#console-name").textContent = status.descriptor.name;
     document.querySelector("#resolution").textContent = `${canvas.width} × ${canvas.height}`;
+    document.querySelector("#controller").replaceChildren();
+    document.querySelector("#toggle").disabled = false;
     for (const name of supported) {
       const button = document.createElement("button");
       button.type = "button";
@@ -137,6 +151,9 @@ function renderStatus(status) {
     document.querySelector("#toggle").disabled = agent.state === "stopped" || agent.state === "error";
   }
   inspector.setStatus(status);
+  for (const id of ["save", "load", "reset", "step"]) document.querySelector(`#${id}`).disabled = loadingRom;
+  if (loadingRom) document.querySelector("#toggle").disabled = true;
+  else if (!status.agent) document.querySelector("#toggle").disabled = false;
   if (status.error) message(status.error, true);
 }
 
@@ -206,14 +223,22 @@ async function poll() {
     if (!initialized || performance.now() - lastStatusAt > 500) {
       renderStatus(await request("/api/status"));
       lastStatusAt = performance.now();
-      if (inspector.wantsSnapshot()) inspector.setSnapshot(await request("/api/game-state"));
-      if (inspector.wantsExchange()) inspector.setExchange(await request("/api/jev-exchange"));
+      if (inspector.wantsSnapshot()) {
+        const snapshot = await request("/api/game-state");
+        if (snapshot.gameId === gameId) inspector.setSnapshot(snapshot);
+      }
+      if (inspector.wantsExchange()) {
+        const exchange = await request("/api/jev-exchange");
+        if ((exchange.gameId ?? 0) === gameId) inspector.setExchange(exchange);
+      }
     }
     const response = await fetch("/api/frame");
     if (!response.ok) throw new Error("Could not read the current frame.");
     const pixels = new Uint8ClampedArray(await response.arrayBuffer());
-    if (pixels.length !== canvas.width * canvas.height * 4) throw new Error("Invalid screen data.");
-    context.putImageData(new ImageData(pixels, canvas.width, canvas.height), 0, 0);
+    if (Number(response.headers.get("X-Game-Id")) === gameId) {
+      if (pixels.length !== canvas.width * canvas.height * 4) throw new Error("Invalid screen data.");
+      context.putImageData(new ImageData(pixels, canvas.width, canvas.height), 0, 0);
+    }
   } catch (error) { message(error.message, true); document.querySelector("#run-state").textContent = "Disconnected"; }
   setTimeout(poll, document.hidden ? 500 : 33);
 }
@@ -230,7 +255,7 @@ async function pollAudio() {
       const samples = new Float32Array(bytes.byteLength / 4);
       const view = new DataView(bytes);
       for (let index = 0; index < samples.length; index++) samples[index] = view.getFloat32(index * 4, true);
-      if (generation === audio.generation) audio.play(samples,
+      if (generation === audio.generation && Number(response.headers.get("X-Game-Id")) === gameId) audio.play(samples,
         Number(response.headers.get("X-Audio-Sample-Rate")), Number(response.headers.get("X-Audio-Channels")),
         Number(response.headers.get("X-Audio-Speed")), Number(response.headers.get("X-Audio-Epoch")),
         response.headers.get("X-Audio-Paused") === "true");

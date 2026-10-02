@@ -10,6 +10,8 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
   let revision = null;
   let dirty = false;
   let loading = false;
+  let gameId = 0;
+  let generation = 0;
   let boundedValues = [];
   const form = query("#agent-settings-form");
   const fields = query("#agent-settings-fields");
@@ -38,9 +40,12 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
 
   async function load() {
     if (loading) return;
+    const current = generation;
     loading = true; fields.disabled = true; apply.disabled = true; reload.disabled = true;
     try {
       const result = await request("/api/agent-settings");
+      if (current !== generation) return;
+      gameId = result.gameId ?? 0;
       const settings = result.settings;
       revision = result.revision;
       query("#agent-goal-input").value = settings.objectives.goal;
@@ -51,8 +56,8 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
       unlimited.checked = limits.every(([name]) => settings[name] === null);
       query("#agent-action-frames").value = settings.actionFrames;
       updateLimitInputs(); dirty = false;
-    } catch (error) { message(error.message, true); }
-    finally { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; }
+    } catch (error) { if (current === generation) message(error.message, true); }
+    finally { if (current === generation) { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; } }
   }
   reload.addEventListener("click", () => { void load(); });
   query("#settings-dialog").addEventListener("settings-tab-change", (event) => { if (event.detail === "agent" && !dirty) void load(); });
@@ -81,6 +86,7 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (loading || revision === null) return;
+    const current = generation;
     try {
       const goal = query("#agent-goal-input").value.trim();
       if (!goal || goal.length > 2000) invalid("#agent-goal-input", "objectives", "Enter an objective of at most 2,000 characters.");
@@ -88,10 +94,16 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
         actionFrames: number("#agent-action-frames", 600, false),
         ...Object.fromEntries(limits.map(([name, selector, , maximum]) => [name, number(selector, maximum)])) };
       apply.disabled = true; reload.disabled = true; fields.disabled = true; loading = true;
-      const status = await request("/api/agent-settings", { revision, settings });
+      const status = await request("/api/agent-settings", { revision, settings, gameId });
+      if (current !== generation) return;
       onApply(status); revision = status.agent.settingsRevision; dirty = false;
       message(status.agent.state === "stopped" ? "Settings applied. Increase or disable the reached limit to continue." : "Agent settings applied. Session paused; resume when ready.");
-    } catch (error) { message(error.message, true); }
-    finally { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; }
+    } catch (error) { if (current === generation) message(error.message, true); }
+    finally { if (current === generation) { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; } }
   });
+  return { reset() {
+    generation++; revision = null; gameId = 0; dirty = false; loading = false;
+    fields.disabled = true; apply.disabled = true; reload.disabled = false; form.reset();
+    if (!query("#settings-agent").hidden) void load();
+  } };
 }

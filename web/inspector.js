@@ -364,6 +364,17 @@ export function createInspector(onControllerVisibility) {
   applyLayout();
 
   return {
+    resetGame() {
+      snapshot = undefined; exchange = null; exchangeSnapshot = null; exchangeRevision = -1; wantedExchangeRevision = 0;
+      selectedAction = undefined; stateSignature = ""; actionSignature = ""; observationCache = "";
+      observationPages = []; detailPages = []; detailText = "";
+      for (const name of Object.keys(page)) page[name] = 0;
+      if (dialog.open) dialog.close();
+      empty(query("#game-state"), "Loading the current game state…");
+      empty(query("#available-actions"), "Loading the current actions…");
+      query("#state-count").textContent = "0 / 0"; query("#actions-count").textContent = "0";
+      renderState(); renderActions(); renderObservation();
+    },
     wantsSnapshot() { return !query("#game-state-panel").hidden || !query("#actions-panel").hidden; },
     wantsExchange() { return hasAgent && query("#observation-panel").clientHeight > 0 && exchangeRevision !== wantedExchangeRevision; },
     setExchange(value) {

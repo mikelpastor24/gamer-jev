@@ -1,56 +1,76 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Emulator } from "../core/emulator.js";
 import { hasAudio, validateAction } from "../core/emulator.js";
 import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
 import type { AgentSession } from "../runner/agent-session.js";
-import type { GameStateProvider } from "../core/agent.js";
+import type { AgentSettings, GameStateProvider } from "../core/agent.js";
+import type { GameRuntime } from "../runner/game-runtime.js";
 import { createEmulatorStateProvider } from "../observation/state.js";
 import { parseEmulationSpeed } from "../config/emulation.js";
 import { FrameClock } from "./frame-clock.js";
+import { LocalRomLibrary } from "./rom-library.js";
 
 export interface ViewerOptions {
   readonly port: number;
   readonly speed: number;
   readonly paused: boolean;
   readonly checkpointPath: string;
+  readonly checkpointDirectory?: string;
   readonly agent?: AgentSession;
   readonly gameState?: GameStateProvider;
   readonly record?: (event: unknown) => void;
+  readonly romLibrary?: LocalRomLibrary;
+  readonly loadRom?: (rom: Uint8Array, settings?: AgentSettings) => Promise<GameRuntime>;
+  readonly dispose?: () => void;
 }
 
 export interface Viewer {
   readonly url: string;
+  readonly game: GameRuntime;
+  readonly checkpointPath: string;
   setSpeed(speed: number): void;
   close(): Promise<void>;
 }
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
   let speed = parseEmulationSpeed(options.speed);
-  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
     readFile(new URL("../../web/audio.js", import.meta.url)),
     readFile(new URL("../../web/inspector.js", import.meta.url)),
     readFile(new URL("../../web/agent-settings.js", import.meta.url)),
+    readFile(new URL("../../web/rom-library.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
   let inputAt = 0;
-  const clock = new FrameClock(emulator.descriptor.framesPerSecond);
+  let clock = new FrameClock(emulator.descriptor.framesPerSecond);
   let failure: string | null = null;
   let audioEpoch = 0;
-  const agent = options.agent;
-  const gameState = options.gameState ?? createEmulatorStateProvider(emulator, 24);
+  let agent = options.agent;
+  let gameState = options.gameState ?? createEmulatorStateProvider(emulator, 24);
+  let record = options.record;
+  const initialEmulator = emulator;
+  let game: GameRuntime = { emulator, gameState, ...(agent ? { agent } : {}), ...(record ? { record } : {}),
+    dispose: options.dispose ?? (() => { options.agent?.stop("Session closed."); initialEmulator.dispose(); }) };
+  let checkpointPath = options.checkpointPath;
+  const romLibrary = options.romLibrary ?? new LocalRomLibrary("roms");
+  let gameId = 0;
+  let loadingRom = false;
+  let closing = false;
+  let mutation: Promise<void> | undefined;
   if (paused) agent?.pause();
 
   const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
   const setSpeed = (value: unknown) => {
     const next = parseEmulationSpeed(value);
     if (next === speed) return;
-    options.record?.({ type: "emulation-speed", from: speed, to: next, frame: emulator.frameNumber });
+    record?.({ type: "emulation-speed", from: speed, to: next, frame: emulator.frameNumber });
     speed = next; clock.reset(); audioEpoch++; discardAudio();
   };
   const pause = () => { paused = true; agent?.pause(); buttons = []; audioEpoch++; discardAudio(); };
@@ -66,10 +86,41 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     audioPaused: audioPaused(),
     agent: agent?.snapshot ?? null,
     gameReader: gameState.id,
+    gameId,
+    loadingRom,
+    romLibraryEnabled: options.loadRom !== undefined,
   });
   const json = (response: ServerResponse, value: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json" });
     response.end(JSON.stringify(value));
+  };
+
+  const exclusive = async (operation: () => Promise<void>) => {
+    const pending = operation(); mutation = pending;
+    try { await pending; } finally { if (mutation === pending) mutation = undefined; }
+  };
+  const loadRom = async (id: unknown) => {
+    if (!options.loadRom) throw new Error("ROM loading is unavailable in this viewer.");
+    loadingRom = true; pause();
+    let candidate: GameRuntime | undefined;
+    try {
+      candidate = await options.loadRom(await romLibrary.read(id), agent?.copySettings());
+      candidate.agent?.pause();
+      candidate.gameState.read(candidate.emulator.captureFrame());
+      if (closing) throw new Error("The viewer is closing.");
+      await saveStateFile(emulator, checkpointPath);
+      if (closing) throw new Error("The viewer is closing.");
+      const previous = game;
+      previous.agent?.stop("ROM changed. A new session starts with fresh counters.");
+      previous.record?.({ type: "rom-change", from: previous.emulator.rom.sha256, to: candidate.emulator.rom.sha256,
+        frame: previous.emulator.frameNumber });
+      game = candidate; candidate = undefined;
+      emulator = game.emulator; agent = game.agent; gameState = game.gameState; record = game.record;
+      checkpointPath = join(options.checkpointDirectory ?? "saves", emulator.descriptor.consoleId, emulator.rom.sha256, "checkpoint.json");
+      clock = new FrameClock(emulator.descriptor.framesPerSecond);
+      buttons = []; inputAt = 0; failure = null; gameId++; audioEpoch++; discardAudio();
+      previous.dispose();
+    } finally { candidate?.dispose(); loadingRom = false; }
   };
 
   const server = createServer((request, response) => {
@@ -99,6 +150,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/audio.js": [audioJavascript, "text/javascript; charset=utf-8"],
         "/inspector.js": [inspectorJavascript, "text/javascript; charset=utf-8"],
         "/agent-settings.js": [agentSettingsJavascript, "text/javascript; charset=utf-8"],
+        "/rom-library.js": [romLibraryJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];
@@ -106,17 +158,19 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         response.end(data);
       } else if (path === "/api/status") {
         json(response, status());
+      } else if (path === "/api/roms") {
+        json(response, { enabled: options.loadRom !== undefined, entries: await romLibrary.list() });
       } else if (path === "/api/frame") {
         const frame = emulator.captureFrame();
-        response.writeHead(200, { "Content-Type": "application/octet-stream", "X-Frame-Number": String(frame.number) });
+        response.writeHead(200, { "Content-Type": "application/octet-stream", "X-Frame-Number": String(frame.number), "X-Game-Id": String(gameId) });
         response.end(frame.pixels);
       } else if (path === "/api/game-state") {
-        json(response, gameState.read(emulator.captureFrame()));
+        json(response, { ...gameState.read(emulator.captureFrame()), gameId });
       } else if (path === "/api/jev-exchange") {
-        json(response, agent?.inspection ?? { revision: 0, exchange: null });
+        json(response, { ...(agent?.inspection ?? { revision: 0, exchange: null }), ...(gameId ? { gameId } : {}) });
       } else if (path === "/api/agent-settings") {
         if (!agent) json(response, { error: "Agent settings are unavailable during manual play." }, 400);
-        else json(response, agent.configuration);
+        else json(response, { ...agent.configuration, ...(gameId ? { gameId } : {}) });
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
         const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);
@@ -129,6 +183,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
           "X-Audio-Epoch": String(audioEpoch),
           "X-Audio-Paused": String(audioPaused()),
           "X-Audio-Speed": String(speed),
+          "X-Game-Id": String(gameId),
         });
         response.end(data);
       } else if (path === "/api/screenshot") {
@@ -157,14 +212,22 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
     if (!body || typeof body !== "object") throw new Error("Invalid command body.");
-    if (path === "/api/speed") {
+    if (closing || mutation) throw new Error("A cartridge operation is in progress. Try again when it finishes.");
+    const data = body as Record<string, unknown>;
+    if (("gameId" in data && data.gameId !== gameId) || (gameId > 0 && !("gameId" in data))) {
+      throw new Error("The game changed in another window. Reload the current game and try again.");
+    }
+    if (path === "/api/rom") {
+      if (Object.keys(data).some((key) => key !== "id" && key !== "gameId") || data.gameId !== gameId) throw new Error("Invalid ROM loading command.");
+      await exclusive(() => loadRom(data.id));
+    } else if (path === "/api/speed") {
       const data = body as Record<string, unknown>;
-      if (Object.keys(data).some((key) => key !== "speed")) throw new Error("Invalid emulation speed command.");
+      if (Object.keys(data).some((key) => key !== "speed" && key !== "gameId")) throw new Error("Invalid emulation speed command.");
       setSpeed(data.speed);
     } else if (path === "/api/agent-settings") {
       if (!agent) throw new Error("Agent settings are unavailable during manual play.");
       const data = body as Record<string, unknown>;
-      if (Object.keys(data).some((key) => key !== "settings" && key !== "revision")) throw new Error("Invalid agent settings command.");
+      if (Object.keys(data).some((key) => key !== "settings" && key !== "revision" && key !== "gameId")) throw new Error("Invalid agent settings command.");
       agent.updateSettings(data.settings, data.revision);
       pause(); failure = null;
     } else if (path === "/api/input") {
@@ -194,10 +257,10 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       if (!agent) gameState.reset?.();
       failure = null;
     } else if (path === "/api/save") {
-      await saveStateFile(emulator, options.checkpointPath);
+      await exclusive(() => saveStateFile(emulator, checkpointPath));
     } else if (path === "/api/load") {
       pause();
-      await loadStateFile(emulator, options.checkpointPath);
+      await exclusive(() => loadStateFile(emulator, checkpointPath));
       agent?.clearHistory();
       if (!agent) gameState.reset?.();
       failure = null;
@@ -238,10 +301,14 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   const port = typeof address === "object" && address ? address.port : options.port;
   return {
     url: `http://127.0.0.1:${port}`,
+    get game() { return game; },
+    get checkpointPath() { return checkpointPath; },
     setSpeed,
     async close() {
       clearInterval(timer);
+      closing = true;
       pause();
+      await mutation?.catch(() => {});
       agent?.stop("Viewer closed.");
       await closeServer(server);
     },

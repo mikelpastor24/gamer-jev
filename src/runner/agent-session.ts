@@ -88,6 +88,9 @@ export class AgentSession {
 
   get configuration() { return { revision: this.settingsRevision, settings: this.inspectData({ ...this.settings }) }; }
 
+  /** Local session recreation; browser inspection must use the redacted configuration instead. */
+  copySettings(): AgentSettings { return structuredClone(this.settings); }
+
   /** Editing settings explicitly reopens an ended session, paused, without resetting any counters. */
   updateSettings(value: unknown, revision: unknown): void {
     const next = parseAgentSettings(value);

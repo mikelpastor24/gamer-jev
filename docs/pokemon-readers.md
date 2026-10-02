@@ -22,6 +22,13 @@ Supply your own ROM. These examples use short filenames; use your actual
 local path, including quotes when it contains spaces. All three readers are
 selected automatically, including in manual mode.
 
+The local viewer can also switch among these cartridges in **Settings → ROMs**.
+Add your files directly to `roms/`, choose one, and press **Load selected ROM**.
+It saves the previous game's checkpoint and starts the selected ROM in pause
+with its reader. To continue a saved game, use **Settings → Session → Restore
+checkpoint** and then **Resume**. Applied goals and session settings carry over;
+each game starts with fresh agent counters and history.
+
 ```sh
 # Manual play and local memory inspection; no credentials or model calls.
 npm start -- --rom "roms/pokemon-red.gb"

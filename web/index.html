@@ -81,6 +81,7 @@
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
         <button id="view-tab" type="button" role="tab" aria-selected="true" aria-controls="settings-view" data-settings-tab="view">Display</button>
         <button id="session-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-session" data-settings-tab="session" tabindex="-1">Session</button>
+        <button id="roms-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-roms" data-settings-tab="roms" tabindex="-1">ROMs</button>
         <button id="agent-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-agent" data-settings-tab="agent" data-agent-only hidden tabindex="-1">Agent</button>
       </div>
       <section id="settings-view" class="settings-body" role="tabpanel" aria-labelledby="view-tab">
@@ -111,6 +112,16 @@
         <h3>Emulation</h3>
         <label class="speed-control" for="emulation-speed">Speed <select id="emulation-speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option><option value="32">32×</option></select></label>
         <div class="settings-actions"><button id="step" type="button">Step one frame</button><button id="reset" class="quiet" type="button">Reset cartridge</button></div>
+      </section>
+      <section id="settings-roms" class="settings-body" role="tabpanel" aria-labelledby="roms-tab" hidden>
+        <h3>Local games</h3>
+        <form id="rom-library-form">
+          <label class="rom-choice" for="rom-choice">ROM<select id="rom-choice" disabled><option value="">Loading library…</option></select></label>
+          <p id="rom-library-summary" class="settings-hint" role="status">Game Boy cartridges in roms/ are available here.</p>
+          <button id="load-rom" class="primary" type="submit" disabled>Load selected ROM</button>
+        </form>
+        <p class="settings-hint">Loading saves a checkpoint of the current game and starts the selected cartridge paused. Use Resume to play, or Restore checkpoint to continue a saved game.</p>
+        <p class="settings-hint" data-agent-only hidden>Applied objectives, constraints, providers, and limits are kept. Each loaded game starts a new agent session with fresh counters and history.</p>
       </section>
       <section id="settings-agent" class="settings-body" role="tabpanel" aria-labelledby="agent-tab" hidden>
         <form id="agent-settings-form" novalidate>
