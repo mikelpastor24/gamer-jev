@@ -106,7 +106,7 @@ dialog::backdrop { background: #1a2c2560; backdrop-filter: blur(3px); }
 #detail-description { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 14px 20px 0; flex-shrink: 0; }
 .detail-content { flex: 1; min-height: 0; margin: 14px 20px; overflow: hidden; }
 #settings-dialog { width: min(560px, calc(100vw - 24px)); height: min(490px, calc(100dvh - 32px)); }
-#settings-dialog:has(#settings-agent:not([hidden])) { height: min(550px, calc(100dvh - 32px)); }
+#settings-dialog:has(#settings-agent:not([hidden]), #settings-session:not([hidden])) { height: min(550px, calc(100dvh - 32px)); }
 .settings-tabs { display: flex; padding: 10px 20px 0; gap: 6px; }
 .settings-tabs button { flex: 1; border: 0; background: transparent; color: var(--muted); }
 .settings-tabs button[aria-selected="true"] { background: #e8eee4; color: var(--green); }
@@ -116,6 +116,8 @@ dialog::backdrop { background: #1a2c2560; backdrop-filter: blur(3px); }
 .visibility-options label { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: 12px; }
 .settings-hint { font-size: 11px; color: var(--muted); line-height: 1.7; margin: 18px 0; }
 .settings-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.speed-control { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 11px; color: var(--muted); }
+.speed-control select { flex: 1; min-width: 0; font: inherit; font-size: 12px; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: #f8faf5; }
 #settings-message { margin: auto 20px 16px; font-size: 11px; line-height: 1.5; color: var(--green); }
 #settings-message.error { color: #a13c30; }
 #settings-agent { flex: 1; }

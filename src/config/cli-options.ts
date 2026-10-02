@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import type { DecisionProviderId, VisionProviderId } from "../core/agent.js";
+import { parseEmulationSpeed } from "./emulation.js";
 
 export interface CliOptions {
   help: boolean;
@@ -72,10 +73,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     "action-frames": { type: "string", default: "24" },
     unlimited: { type: "boolean" },
   }, strict: true, allowPositionals: false });
-  const speed = Number(values.speed);
-  if (!values.speed.trim() || !Number.isFinite(speed) || speed <= 0 || speed > 8) {
-    throw new Error("--speed must be greater than 0 and at most 8.");
-  }
+  const speed = parseEmulationSpeed(values.speed.trim() ? Number(values.speed) : NaN);
   if (!values.help && !values["list-consoles"] && !values["list-profiles"]) {
     if (Boolean(values.rom) === Boolean(values.demo)) throw new Error("Supply exactly one of --rom <path> or --demo.");
     if (values.demo && values.console !== "game-boy") throw new Error("The synthetic demo is a Game Boy ROM.");
@@ -146,7 +144,7 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --frames <count>     Headless frame ceiling; unlimited requires an agent (default: 120)
   --buttons <names>    Headless held inputs, e.g. RIGHT,A
   --port <number>      Local viewer port (default: 8787)
-  --speed <factor>     Viewer speed, greater than 0 and at most 8 (default: 1)
+  --speed <factor>     Viewer speed, greater than 0 and at most 32 (default: 1)
   --paused             Start the viewer paused
   --debug              Print agent/reader diagnostics; record manual sessions too
   --load <path>        Restore a compatible checkpoint before running

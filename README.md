@@ -344,13 +344,30 @@ exchange contents are not saved in browser storage.
 npm start -- --rom "roms/my-game.gb" --paused --speed 1 --port 8787
 ```
 
-Speed is a target relative to the approximately 59.73 Hz Game Boy frame rate.
-Actual throughput depends on your machine and the emulator.
+Change **Settings → Session → Emulation → Speed** during manual or agent play.
+The dashboard offers 0.25×, 0.5×, 1×, 2×, 4×, 8×, 16×, and 32×; changes apply
+immediately and preserve pause state, objectives, pending Jev requests, and
+action frame counts. The game card shows the current target. You can also set
+the initial speed with `--speed`, including fractional values up to 32:
+
+```sh
+npm start -- --rom "roms/my-game.gb" --agent typesafe --vision none --goal "Finish the game" --speed 8
+```
+
+When starting the viewer from TypeScript, pass `speed: 8` in `startViewer`'s
+options; call `viewer.setSpeed(8)` to change it later. Speed is a target relative to the approximately 59.73 Hz Game Boy frame
+rate. Actual throughput depends on your machine and the emulator. Higher speeds
+shorten controller execution between decisions; they do not shorten provider
+response times or change request throttling. Emulation waits while Jev or vision
+is processing, without accumulating gameplay frames to catch up afterward.
+Headless execution already runs without real-time pacing, so `--speed` applies
+to the viewer. Runtime speed edits are local to this process and appear in agent
+or debug JSONL records; checkpoints do not store the viewer's target speed.
 
 Click **Enable sound** in the viewer to start audio; browsers require a user
 interaction before playback. Use **Mute sound** or the volume slider to adjust
 it. Audio follows pause/resume and is cleared when resetting, restoring a
-checkpoint, or hiding the tab. Speed changes affect sound tempo and pitch.
+checkpoint, changing speed, or hiding the tab. Speed changes affect sound tempo and pitch.
 The audio queue is bounded so muted or disconnected viewers cannot accumulate
 an ever-growing recording. Headless runs generate audio internally but do not
 play it through the system speakers.

@@ -105,6 +105,7 @@ async function main(): Promise<void> {
       const viewer = await startViewer(emulator, {
         port: options.port, speed: options.speed, paused: options.paused, checkpointPath,
         gameState,
+        ...(log ? { record: log.record } : {}),
         ...(session ? { agent: session } : {}),
       });
       console.log(`Viewer: ${viewer.url}`);

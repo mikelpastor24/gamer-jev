@@ -7,6 +7,8 @@ import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
 import type { AgentSession } from "../runner/agent-session.js";
 import type { GameStateProvider } from "../core/agent.js";
 import { createEmulatorStateProvider } from "../observation/state.js";
+import { parseEmulationSpeed } from "../config/emulation.js";
+import { FrameClock } from "./frame-clock.js";
 
 export interface ViewerOptions {
   readonly port: number;
@@ -15,14 +17,17 @@ export interface ViewerOptions {
   readonly checkpointPath: string;
   readonly agent?: AgentSession;
   readonly gameState?: GameStateProvider;
+  readonly record?: (event: unknown) => void;
 }
 
 export interface Viewer {
   readonly url: string;
+  setSpeed(speed: number): void;
   close(): Promise<void>;
 }
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
+  let speed = parseEmulationSpeed(options.speed);
   const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
@@ -34,7 +39,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   let paused = options.paused;
   let buttons: string[] = [];
   let inputAt = 0;
-  let lastTick = performance.now();
+  const clock = new FrameClock(emulator.descriptor.framesPerSecond);
   let failure: string | null = null;
   let audioEpoch = 0;
   const agent = options.agent;
@@ -42,6 +47,12 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   if (paused) agent?.pause();
 
   const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
+  const setSpeed = (value: unknown) => {
+    const next = parseEmulationSpeed(value);
+    if (next === speed) return;
+    options.record?.({ type: "emulation-speed", from: speed, to: next, frame: emulator.frameNumber });
+    speed = next; clock.reset(); audioEpoch++; discardAudio();
+  };
   const pause = () => { paused = true; agent?.pause(); buttons = []; audioEpoch++; discardAudio(); };
   const audioPaused = () => paused || (agent !== undefined && !agent.advancing);
   const status = () => ({
@@ -49,7 +60,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     rom: emulator.rom,
     frame: emulator.frameNumber,
     paused,
-    speed: options.speed,
+    speed,
     error: failure,
     audioEpoch,
     audioPaused: audioPaused(),
@@ -117,7 +128,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
           "X-Audio-Channels": String(audio.channels),
           "X-Audio-Epoch": String(audioEpoch),
           "X-Audio-Paused": String(audioPaused()),
-          "X-Audio-Speed": String(options.speed),
+          "X-Audio-Speed": String(speed),
         });
         response.end(data);
       } else if (path === "/api/screenshot") {
@@ -146,7 +157,11 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
     if (!body || typeof body !== "object") throw new Error("Invalid command body.");
-    if (path === "/api/agent-settings") {
+    if (path === "/api/speed") {
+      const data = body as Record<string, unknown>;
+      if (Object.keys(data).some((key) => key !== "speed")) throw new Error("Invalid emulation speed command.");
+      setSpeed(data.speed);
+    } else if (path === "/api/agent-settings") {
       if (!agent) throw new Error("Agent settings are unavailable during manual play.");
       const data = body as Record<string, unknown>;
       if (Object.keys(data).some((key) => key !== "settings" && key !== "revision")) throw new Error("Invalid agent settings command.");
@@ -166,7 +181,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       failure = null;
       audioEpoch++;
       discardAudio();
-      lastTick = performance.now();
+      clock.reset();
       paused = false;
     } else if (path === "/api/step") {
       pause();
@@ -200,17 +215,15 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   const timer = setInterval(() => {
     const now = performance.now();
     if (agent?.terminal && !paused) { failure = agent.snapshot.state === "error" ? agent.snapshot.stopReason : null; pause(); }
-    if (paused) { lastTick = now; return; }
+    if (paused) { clock.reset(now); return; }
     if (now - inputAt > 500) buttons = [];
-    const interval = 1000 / (emulator.descriptor.framesPerSecond * options.speed);
-    const frames = Math.min(3, Math.floor((now - lastTick) / interval));
+    const frames = clock.dueFrames(now, speed);
     if (frames < 1) return;
-    lastTick = Math.max(lastTick + frames * interval, now - 3 * interval);
     try {
       if (agent) {
         const wasAdvancing = agent.advancing;
         agent.tick(frames);
-        if (!agent.advancing) lastTick = now;
+        if (!agent.advancing) clock.reset(now);
         if (wasAdvancing && !agent.advancing) { audioEpoch++; discardAudio(); }
       } else emulator.advance({ buttons, frames });
     }
@@ -225,6 +238,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   const port = typeof address === "object" && address ? address.port : options.port;
   return {
     url: `http://127.0.0.1:${port}`,
+    setSpeed,
     async close() {
       clearInterval(timer);
       pause();

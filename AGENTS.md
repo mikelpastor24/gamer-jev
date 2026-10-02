@@ -55,6 +55,11 @@ Explicit `--unlimited` or null ceilings disable session limits; action durations
 HTTP timeouts, retries, payloads, history, and recordings stay bounded. Jev's stop
 action remains unverified completion until a profile supplies verified progress.
 
+Viewer speed is configurable at startup and in Settings → Session, up to 32×.
+Frame pacing scales its bounded batch with speed, discards provider wait time,
+and resets on speed edits and resume. Speed edits preserve pending agent work,
+action durations, and pause state, and invalidate queued audio on both ends.
+
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
 `npm run typecheck`, `npm test`, and `npm run build`, or `npm run check` for all

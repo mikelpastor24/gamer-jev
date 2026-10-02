@@ -64,7 +64,7 @@ export class AudioPlayer {
     if (!samples.length) return;
     if (![1, 2].includes(channels) || samples.length % channels !== 0 ||
         !Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 192000 ||
-        !Number.isFinite(speed) || speed <= 0 || speed > 8) throw new Error("Invalid game audio packet.");
+        !Number.isFinite(speed) || speed <= 0 || speed > 32) throw new Error("Invalid game audio packet.");
     if (this.nextTime > this.context.currentTime + 0.2) this.reset();
     const buffer = this.context.createBuffer(channels, samples.length / channels, sampleRate);
     for (let channel = 0; channel < channels; channel++) {

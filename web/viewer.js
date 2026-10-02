@@ -15,6 +15,9 @@ let lastStatusAt = 0;
 const audio = new AudioPlayer();
 let audioSupported = false;
 let agentMode = false;
+let playbackSpeed;
+let speedPending = false;
+const speedControl = document.querySelector("#emulation-speed");
 const inspector = createInspector((visible) => { if (!visible) clearInput(); });
 createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
 
@@ -96,11 +99,20 @@ function renderStatus(status) {
     initialized = true;
   }
   paused = status.paused;
+  if (playbackSpeed !== status.speed) { playbackSpeed = status.speed; audio.reset(); }
   audio.setPaused(status.audioPaused ?? paused);
   document.querySelector("#run-state").textContent = status.error ? "Error" : paused ? "Paused" : status.agent?.state ?? "Running";
   document.querySelector("#toggle").textContent = paused ? "Resume" : "Pause";
   document.querySelector("#frame-number").textContent = status.frame.toLocaleString("en-US");
   document.querySelector("#speed").textContent = `${status.speed}×`;
+  if (!speedPending) {
+    speedControl.querySelector('[data-custom-speed]')?.remove();
+    if (![...speedControl.options].some((option) => Number(option.value) === status.speed)) {
+      const option = document.createElement("option"); option.value = String(status.speed); option.textContent = `${status.speed}×`; option.dataset.customSpeed = "true";
+      speedControl.append(option);
+    }
+    speedControl.value = String(status.speed);
+  }
   if (status.agent) {
     const agent = status.agent;
     const liveDecisions = agent.mode !== "mock";
@@ -140,6 +152,18 @@ document.querySelector("#step").addEventListener("click", () => command("/api/st
 document.querySelector("#save").addEventListener("click", () => command("/api/save", "Checkpoint saved locally."));
 document.querySelector("#load").addEventListener("click", () => command("/api/load", "Checkpoint restored. Resume when ready."));
 document.querySelector("#reset").addEventListener("click", () => command("/api/reset", "Cartridge reset. Resume when ready."));
+speedControl.addEventListener("change", async () => {
+  if (speedPending) return;
+  const next = Number(speedControl.value);
+  speedPending = true; speedControl.disabled = true;
+  try {
+    const status = await request("/api/speed", { speed: next });
+    speedPending = false; renderStatus(status);
+    message(`Emulation speed set to ${status.speed}×.`);
+  } catch (error) {
+    speedControl.value = String(playbackSpeed); message(error.message, true);
+  } finally { speedPending = false; speedControl.disabled = false; }
+});
 document.querySelector("#sound").addEventListener("click", async () => {
   const button = document.querySelector("#sound");
   button.disabled = true;
