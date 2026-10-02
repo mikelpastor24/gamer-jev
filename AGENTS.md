@@ -37,10 +37,12 @@ viewer inspection, and headless agent execution are implemented. Game readers
 use the Strategy contract in `src/core/game-reader.ts`, a ROM-aware registry,
 and TypeScript or declarative JSON implementations in `src/profiles/`. The
 original demo has a verified memory reader. `src/profiles/pokemon/` separates
-shared English Gen I decoding from the exact Pokémon Red layout and ROM hash.
-Red startup, naming, the starting room, and overworld menus were checked locally;
-party/battle decoding uses synthetic RAM tests. Other Pokémon readers, collision
-maps, full-game competence, and verified progress checks remain future work.
+shared English Gen I decoding from exact Pokémon Red, Blue, and Yellow ROM hashes.
+Red/Blue share a verified layout; Yellow has its own addresses. Startup, naming,
+the starting room, and overworld menus were checked locally for all three;
+party/battle decoding uses synthetic RAM tests. Other Pokémon revisions and
+generations, collision maps, full-game competence, and verified progress checks
+remain future work.
 
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables

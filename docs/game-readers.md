@@ -162,8 +162,9 @@ scroll state comes from `0xFF43` and `0xFF42`. These meanings belong to the demo
 strategy, not the shared runtime. The new readiness flag changes the demo ROM
 hash, so checkpoints from its earlier version are incompatible.
 
-Shipped readers cover the original demo and the exact English Pokémon Red
-revision documented in [Pokémon readers](pokemon-readers.md). Its Gen I
-decoding is shared separately from the revision's addresses. Other games need
-their own verified reader or can use generic controller actions with vision.
+Shipped readers cover the original demo and exact English Pokémon Red, Blue,
+and Yellow revisions documented in [Pokémon readers](pokemon-readers.md).
+Their Gen I decoding is shared separately from revision-specific hashes and
+layouts. Other games need their own verified reader or can use generic
+controller actions with vision.
 No shared memory map can determine valid gameplay choices for arbitrary ROMs.

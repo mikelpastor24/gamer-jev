@@ -1,22 +1,26 @@
 # Pokémon game readers
 
-The shipped `pokemon-red-en` strategy supports **Pokémon Red Version (USA,
-Europe), SGB Enhanced**, with this exact cartridge image:
+The shipped strategies support these exact English **USA, Europe** releases.
+Red and Blue are SGB Enhanced; Yellow is **Special Pikachu Edition**, with
+GBC and SGB enhancements. Yellow runs in Game Boy mode with this adapter;
+these reader checks do not establish general Game Boy Color support.
 
-| Digest | Value |
-| --- | --- |
-| SHA-256 | `5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b` |
-| SHA-1 | `ea9bcae617fdf159b045185467ae58b2e4a48b9a` |
+| Reader | SHA-256 | SHA-1 |
+| --- | --- | --- |
+| `pokemon-red-en` | `5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b` | `ea9bcae617fdf159b045185467ae58b2e4a48b9a` |
+| `pokemon-blue-en` | `2a951313c2640e8c2cb21f25d1db019ae6245d9c7121f754fa61afd7bee6452d` | `d7037c83e1ae5b39bde3c30787637ba1d4c48ce2` |
+| `pokemon-yellow-en` | `8cbaa499397e4f1a679c992ea9382a2dd7942ab398b48c19829c2d9529de47bf` | `cc7d03262ebfaf2f06772c1a480c7d9d5f4a38e1` |
 
 The registry detects the reader from the console and SHA-256. Renaming the file
 does not change compatibility. Translations, hacks, patched ROMs, and different
 revisions need their own verified descriptors and layouts. This repository
 includes no commercial ROM, artwork, extracted font, or game-data dump.
 
-## Run Red
+## Run a supported release
 
-Supply your own ROM. These commands assume it is named `roms/pokemon-red.gb`;
-use your actual local path, including quotes when it contains spaces.
+Supply your own ROM. These examples use short filenames; use your actual
+local path, including quotes when it contains spaces. All three readers are
+selected automatically, including in manual mode.
 
 ```sh
 # Manual play and local memory inspection; no credentials or model calls.
@@ -27,6 +31,8 @@ npm start -- --rom "roms/pokemon-red.gb" --agent mock --vision none --goal "Insp
 
 # Jev through direct TypeSafe, with local memory observations and no vision.
 npm start -- --rom "roms/pokemon-red.gb" --agent typesafe --vision none --goal "Choose a starter Pokemon and explore Pallet Town"
+npm start -- --rom "roms/pokemon-blue.gb" --agent typesafe --vision none --goal "Choose a starter Pokemon and explore Pallet Town"
+npm start -- --rom "roms/pokemon-yellow.gb" --agent typesafe --vision none --goal "Receive Pikachu and explore Pallet Town"
 ```
 
 For direct Jev, set `TYPESAFE_API_KEY` in your local `.env`. Gateway decisions
@@ -38,8 +44,10 @@ actions when vision is enabled. No screenshots leave the computer with
 
 Open **Game state** in the viewer to inspect facts, descriptions, and
 available actions. The same snapshot is available at `GET /api/game-state`.
-Use `--profile pokemon-red-en` to select explicitly, `--list-profiles` to list
-readers, and `--load <checkpoint>` to resume a compatible local checkpoint.
+Use `--profile pokemon-red-en`, `--profile pokemon-blue-en`, or
+`--profile pokemon-yellow-en` to select explicitly. A mismatched profile is
+rejected even for Red and Blue, which share RAM addresses. Use `--list-profiles`
+to list readers, and `--load <checkpoint>` to resume a compatible local checkpoint.
 Pause or stop from the viewer; Ctrl+C stops the process. Agent limits and
 records follow the workflows in the [README](../README.md).
 
@@ -50,7 +58,7 @@ records follow the workflows in the [README](../README.md).
 | `phase`, `gameStarted` | Boot/intro, transition, boxed text, menu, naming, overworld, or battle evidence |
 | `screenTextTop`, `screenTextBottom` | English text decoded from complete boxes in the 20 by 18 work-RAM tile map |
 | `menuCursorX`, `menuCursorY`, `menuCursorRow` | Visible boxed cursor position and its row; not a claim that the game is polling input |
-| `namingPrompt`, `enteredName` | Heading and current entry when the naming alphabet grid is visible |
+| `namingPrompt`, `enteredName` | Player/rival naming heading and current entry when the naming alphabet grid is visible |
 | `playerName`, `rivalName` | Terminated, decoded names after gameplay starts |
 | `mapId`, `playerX`, `playerY`, `mapWidth`, `mapHeight`, `facing`, `movementMode` | Location and movement state; map dimensions use movement squares |
 | `money`, `badgeCount`, `badges`, `pokedexOwned`, `pokedexSeen` | Packed-BCD money, badge flags, and 151-species bit counts |
@@ -98,8 +106,9 @@ an observation vocabulary and decoding for a compatible engine:
 ```text
 GameReader contract
   GenerationOnePokemonReader (English Gen I structures and encoding)
-    pokemon-red-en (verified hash and Red addresses)
-    future Blue/Yellow readers (their own verified layouts and hashes)
+    pokemon-red-en (exact hash and shared Red/Blue layout)
+    pokemon-blue-en (exact hash and shared Red/Blue layout)
+    pokemon-yellow-en (exact hash and Yellow layout)
   future Gen II reader (its engine structures and encoding)
   future GBA reader (its engine structures and a GBA emulator adapter)
 ```
@@ -107,9 +116,15 @@ GameReader contract
 [`generation-one.ts`](../src/profiles/pokemon/generation-one.ts) owns Gen I
 decoding and action descriptions. [`encoding.ts`](../src/profiles/pokemon/encoding.ts)
 owns English character codes, BCD, bit counts, and boxed text.
-[`red.ts`](../src/profiles/pokemon/red.ts) supplies the exact revision and its
-addresses. These modules stay under `src/profiles/`; the core, Jev adapters,
-vision adapters, and runner contain no Pokémon knowledge. Reads take a fresh
+[`red.ts`](../src/profiles/pokemon/red.ts),
+[`blue.ts`](../src/profiles/pokemon/blue.ts), and
+[`yellow.ts`](../src/profiles/pokemon/yellow.ts) supply each exact revision.
+Red and Blue use [`red-blue-layout.ts`](../src/profiles/pokemon/red-blue-layout.ts);
+Yellow supplies its own explicitly checked addresses. Do not apply a uniform
+offset to all Red addresses: Yellow's tile-map and sprite fields retain their
+addresses while many later fields move. These modules stay under `src/profiles/`;
+the core, Jev adapters, vision adapters, and runner contain no Pokémon knowledge.
+Reads take a fresh
 bounded RAM snapshot without writes, frame advancement, or caches.
 
 To add a compatible Gen I release:
@@ -124,31 +139,37 @@ To add a compatible Gen I release:
    a legally obtained ROM through startup, menus, overworld, party, and battle.
    Keep that ROM and all resulting saves/screenshots out of Git.
 
-Blue and Yellow are **not registered or advertised as supported readers yet**.
 Later generations need different readers; a common filename, franchise, or
 English title does not establish RAM compatibility. GBA games such as Emerald
 also require an emulator backend that this project does not currently supply.
 
 ## Evidence and limits
 
-Layout facts come from the matching English Red disassembly:
+Release identities and layout facts were checked against the matching
+English disassemblies:
 
-- [Release hashes and project documentation](https://github.com/pret/pokered)
-- [Red symbol addresses](https://github.com/pret/pokered/blob/symbols/pokered.sym)
-- [Work-RAM structures and semantics](https://github.com/pret/pokered/blob/master/ram/wram.asm)
+- [Red/Blue release hashes](https://github.com/pret/pokered)
+- [Yellow release hash](https://github.com/pret/pokeyellow)
+- [Red symbol addresses](https://github.com/pret/pokered/blob/3f618d59edf43918f48f5e558c34e04cb2fc5619/pokered.sym)
+- [Blue symbol addresses](https://github.com/pret/pokered/blob/3f618d59edf43918f48f5e558c34e04cb2fc5619/pokeblue.sym)
+- [Yellow symbol addresses](https://github.com/pret/pokeyellow/blob/573535d742a347c6b20ab74f962df4c9820a0bbb/pokeyellow.sym)
+- [Red/Blue work-RAM structures](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/ram/wram.asm)
+- [Yellow work-RAM structures](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/ram/wram.asm)
 - [Character encoding](https://github.com/pret/pokered/blob/master/constants/charmap.asm)
 - [Party structures and PP masks](https://github.com/pret/pokered/blob/master/constants/pokemon_data_constants.asm)
 - [Runtime flags](https://github.com/pret/pokered/blob/master/constants/ram_constants.asm)
 
 The reader is an original implementation using documented layout facts; no
 disassembly code or commercial assets are copied. Automated tests use invented
-RAM and blank frames, including party/battle decoding, startup guards, bounded
-actions, revision rejection, restore/reset, and a memory-only session. Local
-checks with the matching Red ROM exercised the intro, naming, starting room,
-and overworld menu. Battle decoding is covered by synthetic fixtures; full-game
-play and live Jev performance have not been verified.
+RAM and blank frames for each release, including party/battle decoding, startup
+guards, bounded actions, cross-version rejection, restore/reset, and memory-only
+sessions. Local checks with the matching ROMs exercised startup, intro, naming,
+the starting room, overworld menus, restore/reset, and memory-only decision
+execution. Party/battle decoding is covered by synthetic fixtures; full-game
+play and live Jev performance have not been verified. Yellow-specific follower
+behavior and Pikachu's happiness are not decoded by the shared reader.
 
-This first reader supplies observations, not a complete Pokémon agent. It has
+These readers supply observations, not a complete Pokémon agent. They have
 no collision map, NPC or exit model, pathfinding, event-flag objectives, or
 verified completion checks. Vision can supplement missing visible evidence.
 Loading the ROM and decoding state do not establish that Jev will finish it.

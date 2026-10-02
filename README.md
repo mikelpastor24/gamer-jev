@@ -122,8 +122,8 @@ TypeSafe ignores `JEV_MODEL`; disabled and mock vision ignore `VISION_MODEL`.
 Direct TypeSafe records the actual model ID returned by the API. Gateway model
 names use its provider/model format, and the visual model must accept images.
 
-The original demo and the verified English Pokémon Red revision have
-automatically selected memory readers. To use only Jev:
+The original demo and the verified English Pokémon Red, Blue, and Yellow
+revisions have automatically selected memory readers. To use only Jev:
 
 ```sh
 npm start -- --demo --agent gateway --vision none --goal "Increase scrollX"
@@ -137,7 +137,7 @@ positions, or valid gameplay choices. Readers follow the `GameReader` Strategy
 contract and registry. See [adding a game reader](docs/game-readers.md) and the
 working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
 [JSON profile](examples/demo-profile.json) without implementing another class.
-See [Pokémon readers](docs/pokemon-readers.md) for the supported Red hash,
+See [Pokémon readers](docs/pokemon-readers.md) for the supported hashes,
 decoded fields, limits, and extending the shared Gen I reader to other revisions.
 
 Open **Game state** in manual or agent mode to inspect live fields,
@@ -487,10 +487,11 @@ registration, JSON schema, validation, and examples.
   HTTP responses. Live credentials and success in commercial games have not
   been validated. Visual interpretations may be wrong, and compatibility does
   not guarantee objective completion or effective play in every game.
-- Shipped readers cover the original demo and one English Pokémon Red revision.
-  Red startup, naming, the starting room, and overworld menus were checked locally;
-  party/battle decoding is tested with synthetic RAM. Full-game play, other
-  Pokémon readers, collision maps, and verified progress checks remain future work.
+- Shipped readers cover the original demo and exact English Pokémon Red, Blue,
+  and Yellow revisions. Startup, naming, the starting room, and overworld menus
+  were checked locally for all three; party/battle decoding is tested with
+  synthetic RAM. Full-game play, other Pokémon revisions and generations,
+  collision maps, and verified progress checks remain future work.
   The demo's new readiness flag changes its hash; older demo checkpoints must
   be replaced. Reader compatibility is checked against exact ROM hashes.
 
