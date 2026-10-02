@@ -20,6 +20,8 @@ import { loadJsonGameReader } from "./profiles/json.js";
 import { AgentSession } from "./runner/agent-session.js";
 import { runAgentHeadless } from "./runner/agent-headless.js";
 import { openSessionLog } from "./runner/session-log.js";
+import { createDiagnosticLogger } from "./runner/diagnostics.js";
+import type { DiagnosticSink } from "./core/diagnostics.js";
 
 async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
@@ -48,30 +50,37 @@ async function main(): Promise<void> {
   try {
     if (options.loadPath) await loadStateFile(emulator, options.loadPath);
     console.log(`Loaded ${emulator.rom.title} on ${emulator.descriptor.name}.`);
+    if ((options.agent && options.agent !== "mock" || options.visionProvider === "gateway") && existsSync(".env")) loadEnvFile(".env");
+    let diagnostics: DiagnosticSink | undefined;
+    if (options.agent || options.debug) {
+      const logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
+      const secrets = [process.env.TYPESAFE_API_KEY, process.env.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
+      log = openSessionLog(logPath, { secrets, onLimit: () => console.error("Local session log reached 32 MiB. Further file events are omitted; gameplay continues.") });
+      diagnostics = createDiagnosticLogger(log.record, { verbose: options.debug, secrets });
+      console.log(`${options.agent ? "Session" : "Debug"} record: ${logPath}`);
+    }
     const profileState = options.profile && existsSync(options.profile) ?
-      bindGameReader(await loadJsonGameReader(options.profile), emulator, options.actionFrames) :
-      readers.createFor(emulator, options.actionFrames, options.profile);
+      bindGameReader(await loadJsonGameReader(options.profile), emulator, options.actionFrames, diagnostics) :
+      readers.createFor(emulator, options.actionFrames, options.profile, diagnostics);
     const gameState = profileState ?? createEmulatorStateProvider(emulator, options.actionFrames);
+    if (!profileState) diagnostics?.({ component: "game-reader", level: "info", event: "metadata-only", frame: emulator.frameNumber,
+      data: { console: emulator.descriptor.consoleId, romSha256: emulator.rom.sha256 } });
     gameState.read(emulator.captureFrame()); // Validate the local reader before any provider calls.
     if (profileState) console.log(`Game reader: ${profileState.id}`);
     if (options.agent) {
       if (options.observationMode === "state" && !profileState) throw new Error("Memory-only agent mode requires a compatible game reader. Supply --profile <id/path>, or use --vision gateway.");
-      if ((options.agent !== "mock" || options.visionProvider === "gateway") && existsSync(".env")) loadEnvFile(".env");
       const objectives = options.objectivesPath ? await loadObjectives(options.objectivesPath) : parseObjectives({ goal: options.goal });
-      const budget = new RequestBudget({ maxRequests: options.requests, timeoutMs: 20_000, intervalMs: 250, retries: 1 });
-      const settings = { environment: process.env, budget };
+      const budget = new RequestBudget({ maxRequests: options.requests, timeoutMs: 20_000, intervalMs: 250, retries: 1 }, diagnostics);
+      const settings = { environment: process.env, budget, ...(diagnostics ? { diagnostics } : {}) };
       const decider = createDecisionProvider(options.agent, settings);
       const vision = createVisionProvider(options.visionProvider, settings);
       const stateObserver = createStateObserver(gameState);
       const observer = vision ? withVision(stateObserver, vision) : stateObserver;
-      const logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
-      log = openSessionLog(logPath);
       session = new AgentSession(emulator, { observer, decider, budget, mode: options.agent, visionProvider: options.visionProvider, objectives,
         actionFrames: options.actionFrames, maxDecisions: options.decisions, maxSeconds: options.maxSeconds,
-        record: log.record,
+        record: log!.record, ...(diagnostics ? { diagnostics } : {}),
       });
       console.log(`Agent: ${options.agent}. Vision: ${options.visionProvider}. Observation: ${options.observationMode}. Goal: ${objectives.goal}`);
-      console.log(`Session record: ${logPath}`);
       console.log(options.agent === "mock" ? "Decisions use predetermined mock inputs without Jev API calls." :
         `Structured state and observations go to Jev ${options.agent === "typesafe" ? "directly through TypeSafe" : "through Vercel AI Gateway"}.`);
       console.log(options.visionProvider === "gateway" ? "Screenshots go to the configured vision model through Vercel AI Gateway." :

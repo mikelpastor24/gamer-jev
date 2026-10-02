@@ -4,6 +4,7 @@ import type { Emulator, Frame } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
 import { AgentFailure, RequestBudget } from "../providers/requests.js";
+import type { DiagnosticEvent, DiagnosticSink } from "../core/diagnostics.js";
 export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
@@ -17,6 +18,7 @@ export interface AgentSessionOptions {
   readonly maxDecisions: number;
   readonly maxSeconds: number;
   readonly record?: (event: unknown) => void;
+  readonly diagnostics?: DiagnosticSink;
 }
 
 
@@ -55,6 +57,8 @@ export class AgentSession {
       console: emulator.descriptor.consoleId, controllerActions: this.actions, limits: {
         decisions: options.maxDecisions, seconds: options.maxSeconds, requests: options.budget.limits,
       } });
+    this.diagnose("info", "session-started", { mode: options.mode, visionProvider: this.visionProvider,
+      observationMode: options.observer.kind ?? "custom", maxDecisions: options.maxDecisions, maxSeconds: options.maxSeconds });
   }
 
   get terminal(): boolean { return this.state === "stopped" || this.state === "error"; }
@@ -72,13 +76,15 @@ export class AgentSession {
 
   pause(): void {
     if (this.terminal) return;
+    const previousState = this.state;
     this.cancelActive();
     this.state = "paused";
+    if (previousState !== "paused") this.diagnose("info", "paused", { previousState, generation: this.generation });
   }
 
   resume(): void {
     if (this.terminal) throw new Error("This agent session has ended. Start a new process for a new session and budget.");
-    if (this.state === "paused") this.state = "idle";
+    if (this.state === "paused") { this.state = "idle"; this.diagnose("info", "resumed", { generation: this.generation }); }
   }
 
   /** A restored or reset emulator must not inherit visual history from another timeline. */
@@ -88,14 +94,18 @@ export class AgentSession {
     this.history = []; this.previous = undefined; this.screenHash = undefined;
     this.unchangedScreens = 0; this.observation = ""; this.decision = undefined; this.gameState = undefined;
     this.record({ type: "timeline-reset", frame: this.emulator.frameNumber });
+    this.diagnose("info", "timeline-reset", { generation: this.generation });
   }
 
   stop(reason: string, failed = false): void {
     if (this.terminal) return;
+    const stage = this.state;
     this.cancelActive();
     this.state = failed ? "error" : "stopped"; this.reason = reason;
     clearTimeout(this.deadlineTimer);
     this.record({ type: "stop", ...this.snapshot, frame: this.emulator.frameNumber });
+    this.diagnose(failed ? "error" : "info", "session-stopped", { stage, reason, decisions: this.decisions,
+      requests: this.options.budget.requests, generation: this.generation });
   }
 
   tick(frames: number): void {
@@ -120,6 +130,7 @@ export class AgentSession {
     this.controller = new AbortController();
     const signal = this.controller.signal;
     this.state = "observing";
+    this.diagnose("debug", "observation-started", { generation });
     const task = this.choose(signal, generation).catch((error: unknown) => {
       if (generation !== this.generation || signal.aborted) return;
       this.stop(error instanceof AgentFailure ? error.message : "Agent failed. Check configuration and provider output.", true);
@@ -133,7 +144,7 @@ export class AgentSession {
     const frame = this.emulator.captureFrame();
     const hash = createHash("sha256").update(frame.pixels).digest("hex");
     const observation = await this.options.observer.observe(frame, this.previous, this.options.objectives, signal);
-    if (signal.aborted || generation !== this.generation) return;
+    if (signal.aborted || generation !== this.generation) { this.diagnose("debug", "observation-discarded", { generation }); return; }
     if (typeof observation.text !== "string" || !observation.text.trim() || observation.text.length > 6000) throw new AgentFailure("Invalid visual observation.");
     this.observation = observation.text;
     const actions = structuredClone(observation.actions ?? this.actions);
@@ -147,17 +158,24 @@ export class AgentSession {
     const context = { objectives: this.options.objectives, console: this.emulator.descriptor.consoleId,
       frame: frame.number, observation: this.observation, unchangedScreens: this.unchangedScreens,
       history: [...this.history], actions, ...(this.gameState ? { gameState: structuredClone(this.gameState) } : {}) };
+    this.diagnose("debug", "decision-requested", { generation, sequence: this.decisions + 1, context,
+      observationModel: observation.model, observationUsage: observation.usage, requests: this.options.budget.requests });
+    const started = performance.now();
     const decision = await this.options.decider.decide(context, signal);
-    if (signal.aborted || generation !== this.generation) return;
+    if (signal.aborted || generation !== this.generation) { this.diagnose("debug", "decision-discarded", { generation }); return; }
     const action = actions.find((candidate) => candidate.id === decision.actionId);
     if (!action) throw new AgentFailure("Jev selected an action outside the supplied controller action set.");
     if (decision.confidence !== null && (!Number.isFinite(decision.confidence) || decision.confidence < 0 || decision.confidence > 1)) throw new AgentFailure("Invalid Jev confidence.");
     this.decisions++; this.decision = decision;
     this.inputTokens += decision.usage.inputTokens; this.outputTokens += decision.usage.outputTokens;
     this.record({ type: "decision", context, observation, decision, screenHash: hash });
+    this.diagnose("info", "decision-selected", { generation, sequence: this.decisions, decision,
+      durationMs: Number((performance.now() - started).toFixed(3)) });
     if (action.stop) { this.stop("Jev requested stop. Objective completion is unverified."); return; }
     this.active = { action, fromFrame: frame.number, remaining: action.frames, release: action.buttons.length ? 4 : 0 };
     this.state = "acting";
+    this.diagnose("info", "action-started", { actionId: action.id, buttons: action.buttons,
+      frames: action.frames, releaseFrames: this.active.release });
   }
 
   private finishAction(interrupted: boolean): void {
@@ -167,6 +185,7 @@ export class AgentSession {
     this.history.push(record);
     this.history = this.history.slice(-12);
     this.record({ type: "action", ...record });
+    this.diagnose("info", "action-completed", { ...record, advancedFrames: record.toFrame - record.fromFrame });
   }
 
   private cancelActive(): void {
@@ -175,4 +194,7 @@ export class AgentSession {
   }
 
   private record(event: unknown): void { this.options.record?.(event); }
+  private diagnose(level: DiagnosticEvent["level"], event: string, data: Readonly<Record<string, unknown>>): void {
+    this.options.diagnostics?.({ component: "agent", level, event, frame: this.emulator.frameNumber, data });
+  }
 }

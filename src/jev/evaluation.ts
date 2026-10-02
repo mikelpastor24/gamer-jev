@@ -1,6 +1,7 @@
 import type { AgentAction, DecisionContext } from "../core/agent.js";
 import { object } from "../providers/http-client.js";
 import { AgentFailure } from "../providers/requests.js";
+import type { DiagnosticSink } from "../core/diagnostics.js";
 
 /** Both Jev transports ask the same typed question about the same observed choices. */
 export function evaluationRequest(context: DecisionContext, model: string) {
@@ -11,7 +12,7 @@ export function evaluationRequest(context: DecisionContext, model: string) {
   } } };
 }
 
-export function choiceAnswer(result: Record<string, unknown>, actions: readonly AgentAction[], requiredProbabilities = false) {
+export function choiceAnswer(result: Record<string, unknown>, actions: readonly AgentAction[], requiredProbabilities = false, diagnostics?: DiagnosticSink) {
   const answers = object(result.answers);
   if (Object.keys(answers).length !== 1) throw new AgentFailure("Jev returned an unexpected answer set.");
   const answer = object(answers.next_action);
@@ -27,11 +28,21 @@ export function choiceAnswer(result: Record<string, unknown>, actions: readonly 
       if (typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) throw new AgentFailure("Jev returned an invalid action probability.");
       probabilities[action.id] = probability; sum += probability;
     }
-    // Native TypeSafe probabilities use the documented full distribution; rounding metadata belongs to Gateway.
-    const rounding = requiredProbabilities || result.rounding === undefined ? undefined : object(result.rounding).probabilityDecimals;
+    // Direct responses observed in local sessions use hundredths without rounding metadata.
+    // Allow their aggregate rounding error only when every probability is on that grid.
+    const hundredths = Object.values(probabilities).every((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-8);
+    const rounding = requiredProbabilities ? (hundredths ? 2 : undefined) :
+      result.rounding === undefined ? undefined : object(result.rounding).probabilityDecimals;
     if (rounding !== undefined && (typeof rounding !== "number" || !Number.isInteger(rounding) || rounding < 0 || rounding > 12)) throw new AgentFailure("Invalid probability rounding metadata.");
-    const tolerance = rounding === undefined ? 0.001 : actions.length * 0.5 * 10 ** -(rounding as number) + 1e-6;
-    if (Math.abs(sum - 1) > tolerance || probabilities[answer.choice]! + 1e-6 < Math.max(...Object.values(probabilities))) throw new AgentFailure("Jev returned an inconsistent action distribution.");
+    const tolerance = Math.min(0.05, rounding === undefined ? 0.001 : actions.length * 0.5 * 10 ** -(rounding as number)) + 1e-6;
+    const highestProbability = Math.max(...Object.values(probabilities));
+    diagnostics?.({ component: "jev", level: "debug", event: "action-distribution", data: {
+      choice: answer.choice, probabilities, sum, tolerance, probabilityDecimals: rounding ?? null,
+      selectedProbability: probabilities[answer.choice], highestProbability,
+    } });
+    if (sum <= 0 || Math.abs(sum - 1) > tolerance) throw new AgentFailure(
+      `Jev action probabilities sum to ${Number(sum.toFixed(6))}; expected 1 within ${Number(tolerance.toFixed(6))}.`);
+    if (probabilities[answer.choice]! + 1e-6 < highestProbability) throw new AgentFailure("Jev selected an action below the highest returned probability.");
   }
   return { actionId: answer.choice, probabilities, answerConfidence: answer.confidence };
 }

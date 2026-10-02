@@ -218,6 +218,36 @@ Each agent run writes a local JSONL record under `logs/sessions/`: objectives,
 selected provider IDs, candidate actions, observations, model choices and usage,
 actual frame ranges, interrupted actions, and stop reasons. API keys and provider error bodies are
 excluded. Records may contain game text and user objectives; keep them local.
+The same file includes timestamped diagnostics for the agent, game reader,
+Jev validation, and HTTP attempts, including failed decisions. Reader snapshots
+are recorded when fields or available actions change. Reset and restore clear
+that comparison, so the next read is recorded again. Logs stop at 32 MiB, write
+a `log-limit` marker, and warn in the terminal; gameplay continues.
+
+Add **`--debug`** to print these diagnostics in the terminal too. Without it,
+only diagnostic warnings and errors are printed. Manual play also creates a
+local diagnostic record when `--debug` is enabled. Each record wraps an `event`
+with an ISO `at` timestamp; diagnostic events have `type: "diagnostic"`,
+`component`, `level`, `event`, an optional emulator `frame`, and structured
+`data`. Use the frame, decision sequence, and model request number to correlate
+reader output, the candidate actions sent to Jev, and the returned distribution.
+No raw HTTP response bodies, authentication headers, or screenshots are logged.
+
+```sh
+npm start -- --rom "roms/my-game.gb" --agent typesafe --vision none --goal "Earn the first badge" --debug
+```
+
+An `action-distribution` diagnostic keeps the probabilities as returned, their
+sum, the allowed rounding tolerance, and the selected and highest probabilities.
+For direct TypeSafe responses on a two-decimal grid, the sum check allows half a
+hundredth per option, capped at 0.05. This handles the rounded probabilities
+observed in local sessions; higher-precision responses retain the stricter check.
+Zero distributions, missing or invalid probabilities, unlisted choices, and a
+choice below the highest returned probability still stop the session. The
+[TypeSafe Choice contract](https://docs.typesafe.ai/api#choice-answer) identifies
+`choice` as the highest-probability option. The runtime preserves that returned
+choice and records probability values without normalizing them.
+
 Live state-only mode sends structured state to the selected Jev service. Gateway
 vision additionally sends screenshots to its visual model; mock vision runs
 locally. ROM binaries and checkpoints stay on your machine. Reader-specific

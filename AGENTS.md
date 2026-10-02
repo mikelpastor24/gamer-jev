@@ -42,6 +42,11 @@ Red startup, naming, the starting room, and overworld menus were checked locally
 party/battle decoding uses synthetic RAM tests. Other Pokémon readers, collision
 maps, full-game competence, and verified progress checks remain future work.
 
+Agent session JSONL records include local diagnostics for readers, decisions,
+response validation, and HTTP attempts. `--debug` prints them and also enables
+manual-session records. Redact credentials, exclude raw provider response bodies,
+deduplicate unchanged reader snapshots, and cap each recording at 32 MiB.
+
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
 `npm run typecheck`, `npm test`, and `npm run build`, or `npm run check` for all

@@ -14,6 +14,7 @@ export interface CliOptions {
   port: number;
   speed: number;
   paused: boolean;
+  debug: boolean;
   loadPath: string | undefined;
   savePath: string | undefined;
   screenshotPath: string | undefined;
@@ -51,6 +52,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     port: { type: "string", default: "8787" },
     speed: { type: "string", default: "1" },
     paused: { type: "boolean" },
+    debug: { type: "boolean" },
     load: { type: "string" },
     save: { type: "string" },
     screenshot: { type: "string" },
@@ -106,6 +108,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     port: integer(values.port, "--port", 1, 65535),
     speed,
     paused: values.paused ?? false,
+    debug: values.debug ?? false,
     loadPath: values.load,
     savePath: values.save,
     screenshotPath: values.screenshot,
@@ -136,6 +139,7 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --port <number>      Local viewer port (default: 8787)
   --speed <factor>     Viewer speed, greater than 0 and at most 8 (default: 1)
   --paused             Start the viewer paused
+  --debug              Print agent/reader diagnostics; record manual sessions too
   --load <path>        Restore a compatible checkpoint before running
   --save <path>        Checkpoint destination; saved at exit and from the viewer
   --screenshot <path>  Write the final headless frame as PNG

@@ -13,6 +13,7 @@ import { withVision } from "../src/observation/combined.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { startViewer } from "../src/server/viewer.js";
+import { controllerActions } from "../src/core/actions.js";
 
 const objectives = { goal: "Increase scrollX", constraints: [], milestones: [] };
 const environment = { TYPESAFE_API_KEY: "private-typesafe-fixture", AI_GATEWAY_API_KEY: "private-gateway-fixture" };
@@ -191,6 +192,43 @@ test("invalid native TypeSafe responses stop before executing inputs", async () 
       assert.equal(emulator.frameNumber, 0); assert.equal(budget.requests, 1);
     } finally { session.stop("Test finished."); emulator.dispose(); }
   }
+});
+
+test("direct TypeSafe accepts bounded hundredths rounding while preserving the returned choice and probabilities", async () => {
+  const emulator = new GameBoyEmulator(createDemoRom());
+  const context = { ...initialContext(emulator), actions: controllerActions(emulator.descriptor.buttons, 8).filter((action) => action.buttons.length <= 1) };
+  // A synthetic response matching the precision observed in a local direct-API session.
+  const probabilities = { press_up: 0.02, press_down: 0.02, press_left: 0.01, press_right: 0,
+    press_a: 0.23, press_b: 0.02, press_start: 0.31, press_select: 0.02, wait: 0.34, stop: 0.03 };
+  try {
+    for (const press_up of [0.01, 0.03]) {
+      const response = nativeResult(context); response.answers.next_action.probabilities = { ...probabilities, press_up };
+      const provider = createDecisionProvider("typesafe", { environment, budget: limits(), fetch: async () => Response.json(response) });
+      const decision = await provider.decide(context, new AbortController().signal);
+      assert.equal(decision.actionId, "wait");
+      assert.deepEqual(decision.probabilities, response.answers.next_action.probabilities);
+    }
+    for (const invalid of [
+      { ...probabilities, wait: 0.44 }, // Sum 1.10 is beyond the rounding cap.
+      { ...probabilities, wait: 0.25 }, // A different action has the highest probability.
+    ]) {
+      const response = nativeResult(context); response.answers.next_action.probabilities = invalid;
+      const provider = createDecisionProvider("typesafe", { environment, budget: limits(), fetch: async () => Response.json(response) });
+      await assert.rejects(provider.decide(context, new AbortController().signal), /probabilities sum|highest returned probability/);
+    }
+    const precise = nativeResult(initialContext(emulator));
+    precise.answers.next_action.probabilities = { wait: 0.5012, stop: 0.5038 };
+    const provider = createDecisionProvider("typesafe", { environment, budget: limits(), fetch: async () => Response.json(precise) });
+    await assert.rejects(provider.decide(initialContext(emulator), new AbortController().signal), /probabilities sum/);
+    const many = { ...context, actions: Array.from({ length: 255 }, (_, index) => ({
+      id: `option_${index}`, description: "Bounded fixture wait", buttons: [], frames: 1, stop: false,
+    })) };
+    for (const firstProbability of [0, 0.9]) {
+      const response = nativeResult(many, "option_0"); response.answers.next_action.probabilities.option_0 = firstProbability;
+      const provider = createDecisionProvider("typesafe", { environment, budget: limits(), fetch: async () => Response.json(response) });
+      await assert.rejects(provider.decide(many, new AbortController().signal), /probabilities sum/);
+    }
+  } finally { emulator.dispose(); }
 });
 
 test("direct TypeSafe authentication errors stay private and overload retries count every attempt", async () => {

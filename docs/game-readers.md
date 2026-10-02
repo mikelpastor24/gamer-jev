@@ -145,6 +145,15 @@ the current state, field descriptions, and available actions. Inspection does
 not advance frames or make model calls. Without a compatible reader, it shows
 explicitly labeled emulator metadata rather than invented game mechanics.
 
+Agent runs automatically record reader diagnostics in the local JSONL path
+printed at startup. Add `--debug` to see them in the terminal, or to enable a
+record for manual play. `game-reader` events include the selected reader and
+ROM hash, changed semantic state and available actions, cache resets, and the
+stage and reason of a read failure. Repeated reads of unchanged state are not
+logged again. Inspection and diagnostics do not advance frames or call models;
+they do not modify the state sent to Jev. Readers receive an optional diagnostic
+sink through the binding layer, so existing strategies need no changes.
+
 The Game Boy adapter reads through the backend's mapped memory API. Readable
 work RAM and interpreted I/O registers are useful for profiles. In the pinned
 backend, VRAM can return access-restricted values while the LCD is active.
