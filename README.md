@@ -122,10 +122,12 @@ TypeSafe ignores `JEV_MODEL`; disabled and mock vision ignore `VISION_MODEL`.
 Direct TypeSafe records the actual model ID returned by the API. Gateway model
 names use its provider/model format, and the visual model must accept images.
 
-The original demo has an automatically selected memory reader. To use only Jev:
+The original demo and the verified English Pokémon Red revision have
+automatically selected memory readers. To use only Jev:
 
 ```sh
 npm start -- --demo --agent gateway --vision none --goal "Increase scrollX"
+npm start -- --rom "roms/pokemon-red.gb" --agent typesafe --vision none --goal "Choose a starter Pokemon"
 npm start -- --rom "roms/my-game.gb" --profile "my-reader" --agent typesafe --vision none --goal "Complete the first level"
 ```
 
@@ -135,8 +137,10 @@ positions, or valid gameplay choices. Readers follow the `GameReader` Strategy
 contract and registry. See [adding a game reader](docs/game-readers.md) and the
 working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
 [JSON profile](examples/demo-profile.json) without implementing another class.
+See [Pokémon readers](docs/pokemon-readers.md) for the supported Red hash,
+decoded fields, limits, and extending the shared Gen I reader to other revisions.
 
-Open **Local game state** in manual or agent mode to inspect live fields,
+Open **Game state** in manual or agent mode to inspect live fields,
 descriptions, and available actions. `GET /api/game-state` exposes the same
 read-only snapshot. This makes no model calls and does not advance the emulator.
 
@@ -232,6 +236,21 @@ You can also hold the on-screen buttons with a mouse or touch. The viewer
 provides pause/resume, a single-frame step, reset, checkpoint save/restore, and
 PNG screenshot downloads, stereo sound, mute, and volume controls. Inputs are cleared when the window loses focus and
 expire on the server if the viewer disconnects.
+
+The viewer uses a dashboard that fits the window, with separate cards for agent
+status, local game state, observations, and available actions. **Settings** opens
+a dialog with display preferences and session tools. Show or hide cards and
+controller buttons, or select **Game only** for more display space. **⤢** expands
+a card. Pause/resume and the camera button for PNG screenshots stay beside the
+game; sound, checkpoints, frame stepping, and reset live in **Settings → Session**. Controller buttons
+are shown by default for manual play and hidden by default for agent sessions.
+Narrow or short windows switch to section tabs.
+Cards paginate long content instead of adding scroll areas. Click a state field,
+action, objective, or stop reason to read its full details; action cards only
+inspect a choice and never execute it. **Fields** lets you hide individual state
+values. Panel and field visibility are remembered in this browser, with field
+preferences kept separately for each reader. **Reset layout & fields** restores
+the defaults. These preferences do not alter observations sent to Jev.
 
 ```sh
 npm start -- --rom "roms/my-game.gb" --paused --speed 1 --port 8787
@@ -363,9 +382,12 @@ registration, JSON schema, validation, and examples.
   HTTP responses. Live credentials and success in commercial games have not
   been validated. Visual interpretations may be wrong, and compatibility does
   not guarantee objective completion or effective play in every game.
-- Only the original demo currently has a shipped, verified memory reader.
-  Its new work-RAM readiness flag changes the ROM hash; older demo checkpoints
-  must be replaced. Reader compatibility is checked against exact ROM hashes.
+- Shipped readers cover the original demo and one English Pokémon Red revision.
+  Red startup, naming, the starting room, and overworld menus were checked locally;
+  party/battle decoding is tested with synthetic RAM. Full-game play, other
+  Pokémon readers, collision maps, and verified progress checks remain future work.
+  The demo's new readiness flag changes its hash; older demo checkpoints must
+  be replaced. Reader compatibility is checked against exact ROM hashes.
 
 ## Development
 

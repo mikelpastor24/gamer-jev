@@ -1,4 +1,5 @@
 import { AudioPlayer } from "./audio.js";
+import { createInspector } from "./inspector.js";
 
 const canvas = document.querySelector("#screen");
 const context = canvas.getContext("2d");
@@ -13,11 +14,16 @@ let lastStatusAt = 0;
 const audio = new AudioPlayer();
 let audioSupported = false;
 let agentMode = false;
+const inspector = createInspector((visible) => { if (!visible) clearInput(); });
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
   element.textContent = text;
   element.classList.toggle("error", error);
+  const settingsMessage = document.querySelector("#settings-message");
+  settingsMessage.textContent = text;
+  settingsMessage.hidden = !text;
+  settingsMessage.classList.toggle("error", error);
 }
 
 async function request(path, body) {
@@ -64,6 +70,7 @@ function renderStatus(status) {
     canvas.width = status.descriptor.screen.width;
     canvas.height = status.descriptor.screen.height;
     document.querySelector("#game-title").textContent = status.rom.title;
+    document.querySelector("#game-title").title = status.rom.title;
     document.querySelector("#console-name").textContent = status.descriptor.name;
     document.querySelector("#resolution").textContent = `${canvas.width} × ${canvas.height}`;
     for (const name of supported) {
@@ -92,13 +99,11 @@ function renderStatus(status) {
   document.querySelector("#toggle").textContent = paused ? "Resume" : "Pause";
   document.querySelector("#frame-number").textContent = status.frame.toLocaleString("en-US");
   document.querySelector("#speed").textContent = `${status.speed}×`;
-  document.querySelector("#game-reader").textContent = status.gameReader === "emulator" ? "Emulator metadata. No semantic game reader is configured." : `Game reader: ${status.gameReader}`;
   if (status.agent) {
     const agent = status.agent;
     const liveDecisions = agent.mode !== "mock";
     const liveVision = agent.visionProvider === "gateway";
     const decisionDestination = agent.mode === "typesafe" ? "TypeSafe" : "Vercel AI Gateway";
-    document.querySelector("#agent-panel").hidden = false;
     document.querySelector("#session-mode").textContent = agent.mode === "mock" ? liveVision ? "Mock decisions + vision" : "Offline mock agent" : agent.observationMode === "state" ? "Jev + game state" : "Jev + vision";
     document.querySelector("#session-intro").textContent = agent.observationMode === "state" ? "Watch the agent read the game state and choose each controller input." : "Watch the agent read game state and visual evidence, then choose each controller input.";
     document.querySelector(".keyboard-hint").textContent = "Controller inputs are managed by the agent. You can pause, inspect, or restore a checkpoint.";
@@ -113,10 +118,11 @@ function renderStatus(status) {
     document.querySelector("#agent-requests").textContent = `${agent.requests} / ${agent.maxRequests}`;
     document.querySelector("#agent-action").textContent = agent.action?.replace(/^press_/, "").replaceAll("_", " + ").toUpperCase() ?? "Waiting";
     document.querySelector("#agent-confidence").textContent = agent.confidence === null ? "Unavailable" : `${Math.round(agent.confidence * 100)}%`;
-    document.querySelector("#agent-observation").textContent = agent.observation || "Waiting for the first observation.";
     document.querySelector("#agent-stop").textContent = agent.stopReason ?? "";
+    document.querySelector("#agent-stop").hidden = !agent.stopReason;
     document.querySelector("#toggle").disabled = agent.state === "stopped" || agent.state === "error";
   }
+  inspector.setStatus(status);
   if (status.error) message(status.error, true);
 }
 
@@ -149,15 +155,21 @@ document.querySelector("#volume").addEventListener("input", (event) => {
 });
 window.addEventListener("keydown", (event) => {
   if (agentMode) return;
+  if (document.querySelector("dialog[open]") || event.target.closest("input, select, textarea, summary, a, [contenteditable]") ||
+      event.target.closest("button") && !event.target.closest("#controller")) return;
   if (!supported.includes(keyMap[event.code])) return;
   event.preventDefault(); keyboard.add(event.code); void sendInput();
 });
 window.addEventListener("keyup", (event) => {
   if (agentMode) return;
-  if (!supported.includes(keyMap[event.code])) return;
+  if (!keyboard.has(event.code)) return;
   event.preventDefault(); keyboard.delete(event.code); void sendInput();
 });
 window.addEventListener("blur", clearInput);
+canvas.addEventListener("pointerdown", () => canvas.focus());
+document.addEventListener("focusin", (event) => {
+  if (event.target.closest("input, select, textarea, summary, a, button, [contenteditable]") && !event.target.closest("#controller")) clearInput();
+});
 document.addEventListener("visibilitychange", () => { if (document.hidden) clearInput(); });
 document.addEventListener("visibilitychange", () => audio.reset());
 window.addEventListener("pagehide", () => audio.mute());
@@ -168,7 +180,7 @@ async function poll() {
     if (!initialized || performance.now() - lastStatusAt > 500) {
       renderStatus(await request("/api/status"));
       lastStatusAt = performance.now();
-      if (document.querySelector("#game-state-panel").open) await renderGameState();
+      if (inspector.wantsSnapshot()) inspector.setSnapshot(await request("/api/game-state"));
     }
     const response = await fetch("/api/frame");
     if (!response.ok) throw new Error("Could not read the current frame.");
@@ -179,17 +191,6 @@ async function poll() {
   setTimeout(poll, document.hidden ? 500 : 33);
 }
 void poll();
-
-async function renderGameState() {
-  const snapshot = await request("/api/game-state");
-  document.querySelector("#game-state").textContent = JSON.stringify({ frame: snapshot.state.frame,
-    values: snapshot.state.values, descriptions: snapshot.state.descriptions,
-    availableActions: snapshot.actions.map((action) => ({ id: action.id, buttons: action.buttons, frames: action.frames })),
-  }, null, 2);
-}
-document.querySelector("#game-state-panel").addEventListener("toggle", (event) => {
-  if (event.target.open) void renderGameState().catch((error) => message(error.message, true));
-});
 
 async function pollAudio() {
   if (audioSupported && audio.enabled && !document.hidden) {

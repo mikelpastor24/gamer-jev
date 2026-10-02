@@ -26,3 +26,11 @@ into project artifacts. Do not redistribute those fixtures with a build.
 [christianmat/jev-pokemon](https://github.com/christianmat/jev-pokemon), by
 Christian Mathiesen, inspired the project and the choice of emulator backend.
 No Pokémon-specific source or game data from that project is included.
+
+## Pokémon memory-layout references
+
+The original Pokémon reader uses factual addresses, data encodings, and
+structure meanings documented by [pret/pokered](https://github.com/pret/pokered).
+See [the reader documentation](docs/pokemon-readers.md) for exact sources and
+supported ROM hashes. No disassembly source, ROM bytes, game artwork, fonts,
+or extracted game-data tables are included. Users supply their own ROMs.

@@ -36,8 +36,11 @@ works offline. Objectives, bounded sessions, recent history, JSONL records,
 viewer inspection, and headless agent execution are implemented. Game readers
 use the Strategy contract in `src/core/game-reader.ts`, a ROM-aware registry,
 and TypeScript or declarative JSON implementations in `src/profiles/`. The
-original demo has a verified memory reader. Commercial-game readers and
-verified progress checks remain future work.
+original demo has a verified memory reader. `src/profiles/pokemon/` separates
+shared English Gen I decoding from the exact Pokémon Red layout and ROM hash.
+Red startup, naming, the starting room, and overworld menus were checked locally;
+party/battle decoding uses synthetic RAM tests. Other Pokémon readers, collision
+maps, full-game competence, and verified progress checks remain future work.
 
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses

@@ -23,11 +23,12 @@ export interface Viewer {
 }
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
-  const [html, css, javascript, audioJavascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript, inspectorJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
     readFile(new URL("../../web/audio.js", import.meta.url)),
+    readFile(new URL("../../web/inspector.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
@@ -84,6 +85,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/style.css": [css, "text/css; charset=utf-8"],
         "/viewer.js": [javascript, "text/javascript; charset=utf-8"],
         "/audio.js": [audioJavascript, "text/javascript; charset=utf-8"],
+        "/inspector.js": [inspectorJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];

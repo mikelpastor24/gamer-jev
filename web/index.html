@@ -9,73 +9,107 @@
   </head>
   <body>
     <main>
-      <header>
+      <header class="app-header">
         <a class="brand" href="/">Gamer Jev<span>EMULATION LAB</span></a>
+        <div class="cartridge"><h1 id="game-title">Loading your cartridge…</h1><p id="session-intro">Play, inspect, and pick up where you left off.</p></div>
         <span id="session-mode" class="badge">Manual session</span>
+        <button id="open-settings" class="settings-button" type="button" aria-haspopup="dialog" aria-controls="settings-dialog"><span aria-hidden="true">⚙</span> Settings</button>
       </header>
-      <section class="intro">
-        <p class="eyebrow">LOCAL EMULATOR</p>
-        <h1 id="game-title">Loading your cartridge…</h1>
-        <p id="session-intro">Play, inspect, and pick up where you left off.</p>
-      </section>
-      <div class="workspace">
+      <nav id="workspace-tabs" class="workspace-tabs" aria-label="Workspace sections">
+        <button type="button" data-tab="game" aria-pressed="true">Game</button>
+        <button type="button" data-tab="agent" aria-pressed="false" hidden>Agent</button>
+        <button type="button" data-tab="state" aria-pressed="false">State</button>
+        <button type="button" data-tab="observation" aria-pressed="false" hidden>Observation</button>
+        <button type="button" data-tab="actions" aria-pressed="false">Actions</button>
+      </nav>
+      <div class="workspace" id="workspace" data-mobile-active="game">
         <section class="console" aria-label="Game screen and controls">
-          <div class="screen-surround"><canvas id="screen" width="160" height="144" aria-label="Emulated game display"></canvas></div>
-          <div class="screen-caption"><span id="console-name">Game Boy</span><span id="run-state" role="status">Connecting</span></div>
+          <div class="console-heading"><span id="console-name">Game Boy</span><div class="playback-controls"><span id="run-state" class="status-pill" role="status">Connecting</span><a class="screenshot-button" href="/api/screenshot" download="screenshot.png" aria-label="Download game screenshot" title="Screenshot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5l-2 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.5z"/><circle cx="12" cy="13" r="4"/></svg></a><button id="toggle" class="primary" type="button">Pause</button></div></div>
+          <div class="screen-surround"><canvas id="screen" width="160" height="144" tabindex="0" aria-label="Emulated game display"></canvas></div>
+          <div class="screen-caption"><span class="metric">Frame <strong id="frame-number">0</strong></span><span class="metric">Speed <strong id="speed">1×</strong></span><span id="resolution">160 × 144</span></div>
           <div id="controller" class="controller" aria-label="Controller buttons"></div>
-          <p class="keyboard-hint">Arrow keys to move · Z / X for A / B · Enter to start · Shift to select</p>
+          <p class="keyboard-hint">Click screen to play · Arrows · Z / X for A / B · Enter to start · Shift to select</p>
         </section>
-        <aside class="panel">
-          <p class="eyebrow">SESSION</p>
-          <div class="primary-controls">
-            <button id="toggle" class="primary" type="button">Pause</button>
-            <button id="step" type="button">Step one frame</button>
-          </div>
-          <dl>
-            <div><dt>Frame</dt><dd id="frame-number">0</dd></div>
-            <div><dt>Speed</dt><dd id="speed">1×</dd></div>
-            <div><dt>Resolution</dt><dd id="resolution">160 × 144</dd></div>
-          </dl>
-          <section id="agent-panel" hidden aria-label="Agent decisions">
-            <p class="eyebrow">AGENT</p>
-            <p id="agent-goal" class="description"></p>
-            <dl>
-              <div><dt>Jev provider</dt><dd id="agent-provider">Waiting</dd></div>
-              <div><dt>Vision provider</dt><dd id="vision-provider">Waiting</dd></div>
-              <div><dt>State</dt><dd id="agent-state">Idle</dd></div>
-              <div><dt>Decisions</dt><dd id="agent-decisions">0</dd></div>
-              <div><dt>Model attempts</dt><dd id="agent-requests">0</dd></div>
-              <div><dt>Selected input</dt><dd id="agent-action">Waiting</dd></div>
-              <div><dt>Confidence</dt><dd id="agent-confidence">Unavailable</dd></div>
-            </dl>
-            <details><summary>Agent observation</summary><p id="agent-observation"></p></details>
-            <p id="agent-stop" class="description" role="status"></p>
-            <hr>
+        <aside id="inspector" class="inspector" aria-label="Session inspection">
+          <section id="agent-panel" class="data-panel" data-panel="agent" hidden aria-labelledby="agent-heading">
+            <div class="panel-heading"><h2 id="agent-heading">Agent overview</h2><div class="panel-tools"><button type="button" data-expand="agent" aria-label="Expand agent overview" aria-pressed="false">⤢</button></div></div>
+            <div class="panel-body" id="agent-content">
+              <button id="agent-goal" class="goal" type="button" aria-label="Read the full objective">Waiting for the objective.</button>
+              <dl class="agent-stats">
+                <div><dt>Jev provider</dt><dd id="agent-provider">Waiting</dd></div>
+                <div><dt>Vision</dt><dd id="vision-provider">Waiting</dd></div>
+                <div><dt>State</dt><dd id="agent-state">Idle</dd></div>
+                <div><dt>Decisions</dt><dd id="agent-decisions">0</dd></div>
+                <div><dt>Model attempts</dt><dd id="agent-requests">0</dd></div>
+                <div><dt>Confidence</dt><dd id="agent-confidence">Unavailable</dd></div>
+              </dl>
+              <div class="decision-strip"><span>Selected input</span><strong id="agent-action">Waiting</strong></div>
+              <button id="agent-stop" class="stop-reason" type="button" hidden aria-label="Read the session stop reason"></button>
+            </div>
           </section>
-          <details id="game-state-panel">
-            <summary>Local game state</summary>
-            <p id="game-reader" class="description"></p>
-            <pre id="game-state">Open to inspect state and available actions.</pre>
-          </details>
-          <div class="audio-controls">
-            <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
-            <label for="volume">Volume <output id="volume-value">35%</output></label>
-            <input id="volume" type="range" min="0" max="100" value="35" aria-label="Game audio volume">
-          </div>
-          <hr>
-          <p class="eyebrow">CHECKPOINT</p>
-          <p class="description">Save the current session to continue later.</p>
-          <div class="save-controls">
-            <button id="save" type="button">Save checkpoint</button>
-            <button id="load" type="button">Restore checkpoint</button>
-          </div>
-          <a class="download" href="/api/screenshot" download="screenshot.png">Download screenshot ↗</a>
-          <hr>
-          <button id="reset" class="quiet" type="button">Reset cartridge</button>
-          <p id="message" role="status" aria-live="polite"></p>
+          <section id="game-state-panel" class="data-panel" data-panel="state" aria-labelledby="state-heading">
+            <div class="panel-heading"><h2 id="state-heading">Game state <span id="state-count" class="count">0</span></h2><div class="panel-tools"><button id="field-settings" class="text-tool" type="button" aria-pressed="false">Fields</button><button type="button" data-expand="state" aria-label="Expand game state" aria-pressed="false">⤢</button></div></div>
+            <p id="game-reader" class="panel-subtitle">Waiting for the game reader.</p>
+            <div id="game-state" class="panel-body state-grid" aria-label="Game state fields"><p class="empty-state">Connecting to local game state…</p></div>
+            <div class="pagination"><button id="state-previous" type="button" aria-label="Previous game state page">←</button><span id="state-page" aria-live="polite">Page 1 of 1</span><button id="state-next" type="button" aria-label="Next game state page">→</button></div>
+          </section>
+          <section id="observation-panel" class="data-panel" data-panel="observation" hidden aria-labelledby="observation-heading">
+            <div class="panel-heading"><h2 id="observation-heading">Observation</h2><div class="panel-tools"><button type="button" data-expand="observation" aria-label="Expand observation" aria-pressed="false">⤢</button></div></div>
+            <p class="panel-subtitle">Latest evidence supplied to the agent</p>
+            <div class="panel-body observation-body"><p id="agent-observation">Waiting for the first observation.</p></div>
+            <div class="pagination"><button id="observation-previous" type="button" aria-label="Previous observation page">←</button><span id="observation-page" aria-live="polite">Page 1 of 1</span><button id="observation-next" type="button" aria-label="Next observation page">→</button></div>
+          </section>
+          <section id="actions-panel" class="data-panel" data-panel="actions" aria-labelledby="actions-heading">
+            <div class="panel-heading"><h2 id="actions-heading">Available actions <span id="actions-count" class="count">0</span></h2><div class="panel-tools"><button type="button" data-expand="actions" aria-label="Expand available actions" aria-pressed="false">⤢</button></div></div>
+            <p class="panel-subtitle">Current reader choices · click to inspect</p>
+            <div id="available-actions" class="panel-body actions-grid"><p class="empty-state">Waiting for available actions…</p></div>
+            <div class="pagination"><button id="actions-previous" type="button" aria-label="Previous available actions page">←</button><span id="actions-page" aria-live="polite">Page 1 of 1</span><button id="actions-next" type="button" aria-label="Next available actions page">→</button></div>
+          </section>
         </aside>
       </div>
-      <footer><span>ROMs and checkpoints stay on your machine.</span><span id="privacy-note">Manual mode runs locally.</span></footer>
+      <footer><p id="message" role="status" aria-live="polite">ROMs and checkpoints stay on your machine.</p><button id="privacy-note" type="button">Manual mode runs locally.</button></footer>
     </main>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-heading"><h2 id="settings-title">Settings</h2><button id="close-settings" type="button" aria-label="Close settings">×</button></div>
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button id="view-tab" type="button" role="tab" aria-selected="true" aria-controls="settings-view" data-settings-tab="view">Display</button>
+        <button id="session-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-session" data-settings-tab="session" tabindex="-1">Session</button>
+      </div>
+      <section id="settings-view" class="settings-body" role="tabpanel" aria-labelledby="view-tab">
+        <h3>Visible panels</h3>
+        <div class="visibility-options">
+          <label data-agent-only hidden><input type="checkbox" data-visibility="agent" checked> Agent overview</label>
+          <label><input type="checkbox" data-visibility="state" checked> Game state</label>
+          <label data-agent-only hidden><input type="checkbox" data-visibility="observation" checked> Observation</label>
+          <label><input type="checkbox" data-visibility="actions" checked> Available actions</label>
+        </div>
+        <h3>Game display</h3>
+        <div class="visibility-options">
+          <label><input type="checkbox" id="show-controller" checked> Controller buttons</label>
+          <label><input type="checkbox" id="focus-game"> Game only</label>
+        </div>
+        <p class="settings-hint">Use Fields in the game state card to choose individual values. These choices only affect your view.</p>
+        <button id="reset-layout" class="quiet" type="button">Reset layout &amp; fields</button>
+      </section>
+      <section id="settings-session" class="settings-body" role="tabpanel" aria-labelledby="session-tab" hidden>
+        <h3>Sound</h3>
+        <div class="audio-controls">
+          <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
+          <label for="volume">Volume <output id="volume-value">35%</output></label>
+          <input id="volume" type="range" min="0" max="100" value="35" aria-label="Game audio volume">
+        </div>
+        <h3>Checkpoint</h3>
+        <div class="settings-actions"><button id="save" type="button">Save checkpoint</button><button id="load" type="button">Restore checkpoint</button></div>
+        <h3>Emulation</h3>
+        <div class="settings-actions"><button id="step" type="button">Step one frame</button><button id="reset" class="quiet" type="button">Reset cartridge</button></div>
+      </section>
+      <p id="settings-message" role="status" aria-live="polite" hidden></p>
+    </dialog>
+    <dialog id="detail-dialog" aria-labelledby="detail-title">
+      <div class="dialog-heading"><h2 id="detail-title">Details</h2><button id="close-detail" type="button" aria-label="Close details">×</button></div>
+      <p id="detail-description"></p>
+      <div id="detail-content" class="detail-content"></div>
+      <div class="pagination"><button id="detail-previous" type="button" aria-label="Previous detail page">←</button><span id="detail-page" aria-live="polite">Page 1 of 1</span><button id="detail-next" type="button" aria-label="Next detail page">→</button></div>
+    </dialog>
   </body>
 </html>

@@ -140,7 +140,7 @@ override that default. Pressed buttons are released for four frames afterward.
 
 ## Inspect and validate
 
-Open **Local game state** in the viewer, or read `GET /api/game-state`, to inspect
+Open **Game state** in the viewer, or read `GET /api/game-state`, to inspect
 the current state, field descriptions, and available actions. Inspection does
 not advance frames or make model calls. Without a compatible reader, it shows
 explicitly labeled emulator metadata rather than invented game mechanics.
@@ -153,6 +153,8 @@ scroll state comes from `0xFF43` and `0xFF42`. These meanings belong to the demo
 strategy, not the shared runtime. The new readiness flag changes the demo ROM
 hash, so checkpoints from its earlier version are incompatible.
 
-Only the original demo has a shipped, verified game reader. Other games need
+Shipped readers cover the original demo and the exact English Pokémon Red
+revision documented in [Pokémon readers](pokemon-readers.md). Its Gen I
+decoding is shared separately from the revision's addresses. Other games need
 their own verified reader or can use generic controller actions with vision.
 No shared memory map can determine valid gameplay choices for arbitrary ROMs.

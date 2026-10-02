@@ -27,6 +27,7 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     assert.match(page.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
     assert.equal((await fetch(`${viewer.url}/viewer.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/audio.js`)).status, 200);
+    assert.equal((await fetch(`${viewer.url}/inspector.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/style.css`)).status, 200);
     const before = await fetch(`${viewer.url}/api/frame`);
     assert.equal((await before.arrayBuffer()).byteLength, 160 * 144 * 4);
