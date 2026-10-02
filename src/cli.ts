@@ -22,6 +22,7 @@ import { runAgentHeadless } from "./runner/agent-headless.js";
 import { openSessionLog } from "./runner/session-log.js";
 import { createDiagnosticLogger } from "./runner/diagnostics.js";
 import type { DiagnosticSink } from "./core/diagnostics.js";
+import { redactLogEvent } from "./core/redaction.js";
 
 async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
     console.log(`Loaded ${emulator.rom.title} on ${emulator.descriptor.name}.`);
     if ((options.agent && options.agent !== "mock" || options.visionProvider === "gateway") && existsSync(".env")) loadEnvFile(".env");
     let diagnostics: DiagnosticSink | undefined;
+    const inspectionSecrets = [process.env.TYPESAFE_API_KEY, process.env.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
     if (options.agent || options.debug) {
       const logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
       const secrets = [process.env.TYPESAFE_API_KEY, process.env.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
@@ -79,6 +81,7 @@ async function main(): Promise<void> {
       session = new AgentSession(emulator, { observer, decider, budget, mode: options.agent, visionProvider: options.visionProvider, objectives,
         actionFrames: options.actionFrames, maxDecisions: options.decisions, maxSeconds: options.maxSeconds,
         record: log!.record, ...(diagnostics ? { diagnostics } : {}),
+        redactInspection: (value) => redactLogEvent(value, inspectionSecrets),
       });
       console.log(`Agent: ${options.agent}. Vision: ${options.visionProvider}. Observation: ${options.observationMode}. Goal: ${objectives.goal}`);
       console.log(options.agent === "mock" ? "Decisions use predetermined mock inputs without Jev API calls." :

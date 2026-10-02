@@ -29,7 +29,12 @@ export function createInspector(onControllerVisibility) {
   let mobileTab = "game";
   let editingFields = false;
   let snapshot;
-  let observation = "Waiting for the first observation.";
+  let exchange = null;
+  let exchangeSnapshot = null;
+  let exchangeRevision = -1;
+  let wantedExchangeRevision = 0;
+  let exchangeTab = "input";
+  const exchangeSections = { input: "summary", response: "summary" };
   let selectedAction;
   let detailText = "";
   let observationCache = "";
@@ -192,14 +197,78 @@ export function createInspector(onControllerVisibility) {
     return result.length ? result : [""];
   }
 
+  function selectedExchange(value) {
+    const selection = query("#exchange-request").value;
+    const current = value?.exchange;
+    const completed = value?.completed ?? (current?.status === "complete" ? current : null);
+    return selection === "current" ? current : selection === "completed" ? completed :
+      current?.status === "pending" ? completed ?? current : current;
+  }
+
   function renderObservation() {
+    exchange = selectedExchange(exchangeSnapshot);
+    const sections = exchangeTab === "input" ? [["summary", "Summary"], ["objectives", "Objectives"], ["state", "Game state"],
+      ["observation", "Observation"], ["actions", "Actions"], ["history", "History"], ["question", "Question"], ["json", "Request JSON"]] :
+      [["summary", "Summary"], ["probabilities", "Probabilities"], ["json", "Response fields"], ["decision", "Decision JSON"]];
+    const select = query("#exchange-section");
+    if (select.dataset.tab !== exchangeTab) {
+      select.dataset.tab = exchangeTab;
+      select.replaceChildren(...sections.map(([value, text]) => { const option = document.createElement("option"); option.value = value; option.textContent = text; return option; }));
+    }
+    select.value = exchangeSections[exchangeTab];
+    for (const tab of document.querySelectorAll("[data-exchange-tab]")) {
+      const selected = tab.dataset.exchangeTab === exchangeTab;
+      tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
+    }
     const element = query("#agent-observation");
     const body = element.parentElement;
+    body.setAttribute("aria-labelledby", `exchange-${exchangeTab}-tab`);
+    body.dataset.format = exchangeSections[exchangeTab] === "summary" || exchangeSections[exchangeTab] === "observation" ? "text" : "json";
+    const meta = query("#exchange-meta");
+    meta.textContent = exchange ? `${exchange.provider === "mock" ? "Local mock" : exchange.provider === "typesafe" ? "TypeSafe" : "Gateway"} · Request ${exchange.id} · Frame ${exchange.frame} · ${exchange.status}${exchange.warnings.length ? " · Warning" : ""}` : "Waiting for the first decision request.";
+    meta.title = meta.textContent; meta.dataset.status = exchange?.status ?? "idle";
+    const text = exchangeText();
     if (body.clientHeight === 0) return;
-    const cache = `${body.clientWidth}:${body.clientHeight}:${observation}`;
-    if (cache !== observationCache) { observationCache = cache; observationPages = textPages(element, observation, body.clientHeight); }
+    const cache = `${body.clientWidth}:${body.clientHeight}:${body.dataset.format}:${text}`;
+    if (cache !== observationCache) { observationCache = cache; observationPages = textPages(element, text, body.clientHeight); }
     pagination("observation", observationPages.length, 1);
     element.textContent = observationPages[page.observation];
+  }
+
+  function exchangeText() {
+    if (!exchange) return "The request and its matching response will appear here when the agent makes a decision.";
+    const section = exchangeSections[exchangeTab];
+    const state = exchange.request.state ?? {};
+    const json = (value, fallback) => value === undefined || value === null ? fallback : JSON.stringify(value, null, 2);
+    if (exchangeTab === "input") {
+      if (section === "json") return json(exchange.request, "No request data.");
+      if (exchange.request.unavailable) return exchange.request.unavailable;
+      if (section === "question") return json(exchange.request.questions, "This provider uses the decision context directly. No remote typed question is sent.");
+      if (section === "state") return json(state.gameState, "No semantic game reader is configured.");
+      if (section === "observation") return state.observation || "No observation was supplied.";
+      if (section === "objectives") return json(state.objectives, "No objectives were supplied.");
+      if (section === "actions") return json(state.actions, "No actions were supplied.");
+      if (section === "history") return json(state.history, "No recent action history.");
+      return [`Objective\n${state.objectives?.goal ?? "Unavailable"}`, `Constraints\n${state.objectives?.constraints?.join("\n") || "None"}`,
+        `Milestones\n${state.objectives?.milestones?.join("\n") || "None"}`,
+        `Reader: ${state.gameState?.source ?? "None"}\nState fields: ${Object.keys(state.gameState?.values ?? {}).length}\nAvailable actions: ${state.actions?.length ?? 0}\nRecent actions: ${state.history?.length ?? 0}\nUnchanged screens: ${state.unchangedScreens ?? 0}`,
+        exchange.provider === "mock" ? "Local mock decision. No network request is made." : `Model: ${exchange.request.model ?? "Unavailable"}`].join("\n\n");
+    }
+    const response = exchange.response;
+    const decision = exchange.decision;
+    if (section === "json") return json(response, exchange.error || "Waiting for the response.");
+    if (section === "decision") return json(decision, exchange.error || "No validated decision yet.");
+    const answer = response?.answers?.next_action;
+    const probabilities = answer?.probabilities ?? decision?.probabilities;
+    if (section === "probabilities") return json(probabilities, exchange.error || "No probabilities received yet.");
+    const choice = decision?.actionId ?? answer?.choice ?? "Waiting";
+    const confidence = decision?.confidence ?? answer?.confidence ?? response?.providerMetadata?.typesafe?.confidence?.next_action;
+    const usage = decision?.usage ?? response?.usage;
+    const confidenceText = typeof confidence === "number" ? `${Number((confidence * 100).toFixed(2))}%` : "Unavailable";
+    const tokens = (value) => typeof value === "number" ? String(value) : "Unavailable";
+    return [`Status: ${exchange.status}\nSelected action: ${choice}\nConfidence: ${confidenceText}\nModel: ${decision?.model ?? response?.model ?? "Unavailable"}`,
+      `Input tokens: ${tokens(usage?.inputTokens ?? usage?.input_tokens)}\nOutput tokens: ${tokens(usage?.outputTokens ?? usage?.output_tokens)}\nDecision time: ${exchange.durationMs === null ? exchange.status === "pending" ? "Pending" : "Unavailable" : `${exchange.durationMs} ms`}`,
+      ...(exchange.warnings.length ? [`Warning\n${exchange.warnings.join("\n")}`] : []), ...(exchange.error ? [`${exchange.status === "cancelled" ? "Cancellation" : "Error"}\n${exchange.error}`] : [])].join("\n\n");
   }
 
   function renderDetail() {
@@ -248,6 +317,18 @@ export function createInspector(onControllerVisibility) {
     page.state = 0; page.actions = 0; savePreferences(); applyLayout();
   });
   query("#field-settings").addEventListener("click", () => { editingFields = !editingFields; page.state = 0; renderState(); });
+  query("#exchange-section").addEventListener("change", (event) => { exchangeSections[exchangeTab] = event.target.value; page.observation = 0; renderObservation(); });
+  query("#exchange-request").addEventListener("change", () => { page.observation = 0; renderObservation(); });
+  function selectExchangeTab(name) { exchangeTab = name; page.observation = 0; renderObservation(); }
+  for (const tab of document.querySelectorAll("[data-exchange-tab]")) {
+    tab.addEventListener("click", () => selectExchangeTab(tab.dataset.exchangeTab));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? "input" : event.key === "End" ? "response" : exchangeTab === "input" ? "response" : "input";
+      selectExchangeTab(next); query(`[data-exchange-tab="${next}"]`).focus();
+    });
+  }
   query("#close-detail").addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
   for (const [selector, title] of [["#agent-goal", "Objective"], ["#agent-stop", "Session stop reason"], ["#privacy-note", "Session privacy"]]) query(selector).addEventListener("click", (event) => showDetail(title, event.currentTarget.textContent));
@@ -281,15 +362,20 @@ export function createInspector(onControllerVisibility) {
 
   return {
     wantsSnapshot() { return !query("#game-state-panel").hidden || !query("#actions-panel").hidden; },
+    wantsExchange() { return hasAgent && query("#observation-panel").clientHeight > 0 && exchangeRevision !== wantedExchangeRevision; },
+    setExchange(value) {
+      const next = selectedExchange(value);
+      if (exchange?.id !== next?.id || exchange?.status !== next?.status) page.observation = 0;
+      exchangeRevision = value.revision; exchangeSnapshot = value; renderObservation();
+    },
     setSnapshot(value) {
       if (snapshot?.state.source !== value.state.source) page.state = 0;
       snapshot = value; renderState(); renderActions();
     },
     setStatus(status) {
       const agent = Boolean(status.agent);
+      wantedExchangeRevision = status.agent?.exchange?.revision ?? 0;
       if (agent !== hasAgent) { hasAgent = agent; applyLayout(); }
-      const text = status.agent?.observation || "Waiting for the first observation.";
-      if (text !== observation) { observation = text; page.observation = 0; }
       selectedAction = status.agent?.action;
       query("#game-reader").textContent = status.gameReader === "emulator" ? "Emulator metadata · no semantic reader" : `Reader: ${status.gameReader}`;
       query("#game-reader").title = query("#game-reader").textContent;

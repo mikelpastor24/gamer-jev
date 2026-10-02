@@ -36,13 +36,21 @@ export function choiceAnswer(result: Record<string, unknown>, actions: readonly 
     if (rounding !== undefined && (typeof rounding !== "number" || !Number.isInteger(rounding) || rounding < 0 || rounding > 12)) throw new AgentFailure("Invalid probability rounding metadata.");
     const tolerance = Math.min(0.05, rounding === undefined ? 0.001 : actions.length * 0.5 * 10 ** -(rounding as number)) + 1e-6;
     const highestProbability = Math.max(...Object.values(probabilities));
+    const selectedProbability = probabilities[answer.choice]!;
+    const highestProbabilityChoice = selectedProbability + 1e-6 >= highestProbability;
     diagnostics?.({ component: "jev", level: "debug", event: "action-distribution", data: {
       choice: answer.choice, probabilities, sum, tolerance, probabilityDecimals: rounding ?? null,
-      selectedProbability: probabilities[answer.choice], highestProbability,
+      selectedProbability, highestProbability, highestProbabilityChoice,
     } });
     if (sum <= 0 || Math.abs(sum - 1) > tolerance) throw new AgentFailure(
       `Jev action probabilities sum to ${Number(sum.toFixed(6))}; expected 1 within ${Number(tolerance.toFixed(6))}.`);
-    if (probabilities[answer.choice]! + 1e-6 < highestProbability) throw new AgentFailure("Jev selected an action below the highest returned probability.");
+    // The explicit choice owns the gameplay decision. Distribution ranking is diagnostic
+    // metadata; do not substitute another action or stop an otherwise valid decision.
+    if (!highestProbabilityChoice) diagnostics?.({ component: "jev", level: "warn", event: "choice-probability-mismatch", data: {
+      choice: answer.choice, selectedProbability, highestProbability,
+      highestProbabilityActions: actions.filter((action) => probabilities[action.id]! + 1e-6 >= highestProbability).map((action) => action.id),
+      behavior: "Preserving Jev's explicit choice from the current available action set.",
+    } });
   }
   return { actionId: answer.choice, probabilities, answerConfidence: answer.confidence };
 }

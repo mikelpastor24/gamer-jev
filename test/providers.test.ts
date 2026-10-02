@@ -14,6 +14,7 @@ import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { startViewer } from "../src/server/viewer.js";
 import { controllerActions } from "../src/core/actions.js";
+import type { DiagnosticEvent } from "../src/core/diagnostics.js";
 
 const objectives = { goal: "Increase scrollX", constraints: [], milestones: [] };
 const environment = { TYPESAFE_API_KEY: "private-typesafe-fixture", AI_GATEWAY_API_KEY: "private-gateway-fixture" };
@@ -169,7 +170,7 @@ test("invalid native TypeSafe responses stop before executing inputs", async () 
   const edits: ((value: ReturnType<typeof nativeResult>) => void)[] = [
     (value) => { value.answers.next_action.choice = "press_right"; },
     (value) => { value.answers.next_action.probabilities = { wait: 1 }; },
-    (value) => { value.answers.next_action.probabilities = { wait: 0, stop: 1 }; },
+    (value) => { value.answers.next_action.probabilities = { wait: -0.1, stop: 1.1 }; },
     (value) => { value.answers.next_action.probabilities = { wait: 0, stop: 0 }; },
     (value) => { value.answers.next_action.confidence = 2; },
     (value) => { Reflect.deleteProperty(value.answers.next_action, "confidence"); },
@@ -210,11 +211,11 @@ test("direct TypeSafe accepts bounded hundredths rounding while preserving the r
     }
     for (const invalid of [
       { ...probabilities, wait: 0.44 }, // Sum 1.10 is beyond the rounding cap.
-      { ...probabilities, wait: 0.25 }, // A different action has the highest probability.
+      { ...probabilities, wait: 0.25 }, // Sum 0.91 is beyond the rounding cap.
     ]) {
       const response = nativeResult(context); response.answers.next_action.probabilities = invalid;
       const provider = createDecisionProvider("typesafe", { environment, budget: limits(), fetch: async () => Response.json(response) });
-      await assert.rejects(provider.decide(context, new AbortController().signal), /probabilities sum|highest returned probability/);
+      await assert.rejects(provider.decide(context, new AbortController().signal), /probabilities sum/);
     }
     const precise = nativeResult(initialContext(emulator));
     precise.answers.next_action.probabilities = { wait: 0.5012, stop: 0.5038 };
@@ -229,6 +230,47 @@ test("direct TypeSafe accepts bounded hundredths rounding while preserving the r
       await assert.rejects(provider.decide(many, new AbortController().signal), /probabilities sum/);
     }
   } finally { emulator.dispose(); }
+});
+
+test("direct Jev's valid explicit choice reaches the emulator when another probability is higher", async () => {
+  const emulator = new GameBoyEmulator(createDemoRom());
+  const events: DiagnosticEvent[] = [];
+  const records: unknown[] = [];
+  const diagnostics = (event: DiagnosticEvent) => { events.push(event); };
+  const budget = limits();
+  const probabilities = { press_up: 0.01, press_down: 0.01, press_left: 0, press_right: 0,
+    press_a: 0.17, press_b: 0.01, press_start: 0.38, press_select: 0.02, wait: 0.39, stop: 0.01 };
+  class SingleButtonReader extends DemoGameReader {
+    override availableActions(_state: unknown, actions: readonly import("../src/core/agent.js").AgentAction[]) {
+      return actions.filter((action) => action.buttons.length <= 1);
+    }
+  }
+  const decider = createDecisionProvider("typesafe", { environment, budget, diagnostics,
+    fetch: async (_input, init) => {
+      const context = JSON.parse(String(init?.body)).state as DecisionContext;
+      const response = nativeResult(context, "press_start");
+      response.answers.next_action.probabilities = probabilities;
+      return Response.json(response);
+    },
+  });
+  const session = new AgentSession(emulator, { mode: "typesafe", visionProvider: "none", objectives,
+    observer: createStateObserver(bindGameReader(new SingleButtonReader(), emulator, 8)),
+    decider, budget, actionFrames: 8, maxDecisions: 1, maxSeconds: 60, diagnostics,
+    record: (event) => records.push(event),
+  });
+  try {
+    await runAgentHeadless(emulator, session, new AbortController().signal);
+    assert.equal(session.snapshot.state, "stopped"); assert.equal(session.snapshot.decisions, 1);
+    assert.equal(session.snapshot.action, "press_start"); assert.equal(emulator.frameNumber, 12);
+    assert.match(session.snapshot.stopReason!, /Decision limit/); assert.equal(budget.requests, 1);
+    const selected = records.find((event) => (event as { type: string }).type === "decision") as { decision: { actionId: string; probabilities: unknown } };
+    assert.equal(selected.decision.actionId, "press_start"); assert.deepEqual(selected.decision.probabilities, probabilities);
+    const warning = events.find((event) => event.event === "choice-probability-mismatch")!;
+    assert.equal(warning.level, "warn"); assert.equal(warning.frame, 0);
+    assert.equal(warning.data!.selectedProbability, 0.38); assert.equal(warning.data!.highestProbability, 0.39);
+    assert.deepEqual(warning.data!.highestProbabilityActions, ["wait"]);
+    assert.ok(!events.some((event) => event.event === "validation-failed"));
+  } finally { session.stop("Test finished."); emulator.dispose(); }
 });
 
 test("direct TypeSafe authentication errors stay private and overload retries count every attempt", async () => {

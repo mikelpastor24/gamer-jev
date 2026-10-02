@@ -29,6 +29,7 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     assert.equal((await fetch(`${viewer.url}/audio.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/inspector.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/style.css`)).status, 200);
+    assert.deepEqual(await (await fetch(`${viewer.url}/api/jev-exchange`)).json(), { revision: 0, exchange: null });
     const before = await fetch(`${viewer.url}/api/frame`);
     assert.equal((await before.arrayBuffer()).byteLength, 160 * 144 * 4);
     assert.equal((await post("/api/input", { buttons: ["BAD"] })).status, 400);
@@ -132,6 +133,11 @@ test("the agent viewer exposes decisions, rejects manual input, and stops at its
     assert.equal(emulator.frameNumber, 16); assert.equal(agent.snapshot.decisions, 2);
     const stopped = await (await fetch(`${viewer.url}/api/status`)).json();
     assert.equal(stopped.audioPaused, true); assert.match(stopped.agent.stopReason, /Decision limit/);
+    const exchange = await (await fetch(`${viewer.url}/api/jev-exchange`)).json();
+    assert.equal(exchange.exchange.status, "complete");
+    assert.equal(exchange.exchange.request.state.objectives.goal, "Exercise the controller");
+    assert.equal(exchange.exchange.response.actionId, stopped.agent.action);
+    assert.equal(exchange.revision, stopped.agent.exchange.revision);
     assert.equal((await post("/api/resume")).status, 400);
   } finally { await viewer.close(); emulator.dispose(); }
 });

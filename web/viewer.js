@@ -181,6 +181,7 @@ async function poll() {
       renderStatus(await request("/api/status"));
       lastStatusAt = performance.now();
       if (inspector.wantsSnapshot()) inspector.setSnapshot(await request("/api/game-state"));
+      if (inspector.wantsExchange()) inspector.setExchange(await request("/api/jev-exchange"));
     }
     const response = await fetch("/api/frame");
     if (!response.ok) throw new Error("Could not read the current frame.");

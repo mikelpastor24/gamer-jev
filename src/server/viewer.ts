@@ -99,6 +99,8 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         response.end(frame.pixels);
       } else if (path === "/api/game-state") {
         json(response, gameState.read(emulator.captureFrame()));
+      } else if (path === "/api/jev-exchange") {
+        json(response, agent?.inspection ?? { revision: 0, exchange: null });
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
         const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);

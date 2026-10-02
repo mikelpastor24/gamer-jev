@@ -19,7 +19,7 @@
         <button type="button" data-tab="game" aria-pressed="true">Game</button>
         <button type="button" data-tab="agent" aria-pressed="false" hidden>Agent</button>
         <button type="button" data-tab="state" aria-pressed="false">State</button>
-        <button type="button" data-tab="observation" aria-pressed="false" hidden>Observation</button>
+        <button type="button" data-tab="observation" aria-pressed="false" hidden>Jev</button>
         <button type="button" data-tab="actions" aria-pressed="false">Actions</button>
       </nav>
       <div class="workspace" id="workspace" data-mobile-active="game">
@@ -54,10 +54,17 @@
             <div class="pagination"><button id="state-previous" type="button" aria-label="Previous game state page">←</button><span id="state-page" aria-live="polite">Page 1 of 1</span><button id="state-next" type="button" aria-label="Next game state page">→</button></div>
           </section>
           <section id="observation-panel" class="data-panel" data-panel="observation" hidden aria-labelledby="observation-heading">
-            <div class="panel-heading"><h2 id="observation-heading">Observation</h2><div class="panel-tools"><button type="button" data-expand="observation" aria-label="Expand observation" aria-pressed="false">⤢</button></div></div>
-            <p class="panel-subtitle">Latest evidence supplied to the agent</p>
-            <div class="panel-body observation-body"><p id="agent-observation">Waiting for the first observation.</p></div>
-            <div class="pagination"><button id="observation-previous" type="button" aria-label="Previous observation page">←</button><span id="observation-page" aria-live="polite">Page 1 of 1</span><button id="observation-next" type="button" aria-label="Next observation page">→</button></div>
+            <div class="panel-heading"><h2 id="observation-heading">Jev exchange</h2><div class="panel-tools"><button type="button" data-expand="observation" aria-label="Expand Jev exchange" aria-pressed="false">⤢</button></div></div>
+            <div class="exchange-controls">
+              <div class="exchange-tabs" role="tablist" aria-label="Jev exchange">
+                <button type="button" role="tab" id="exchange-input-tab" data-exchange-tab="input" aria-selected="true" aria-controls="exchange-content">Input</button>
+                <button type="button" role="tab" id="exchange-response-tab" data-exchange-tab="response" aria-selected="false" aria-controls="exchange-content" tabindex="-1">Response</button>
+              </div>
+              <select id="exchange-section" aria-label="Jev exchange detail section"></select>
+            </div>
+            <div class="exchange-meta-row"><select id="exchange-request" aria-label="Decision request to inspect"><option value="latest">Latest result</option><option value="current">Current request</option><option value="completed">Last completed</option></select><p id="exchange-meta" class="panel-subtitle" aria-live="polite">Waiting for the first decision request.</p></div>
+            <div id="exchange-content" class="panel-body observation-body" role="tabpanel" aria-labelledby="exchange-input-tab"><p id="agent-observation">The request and its matching response will appear here.</p></div>
+            <div class="pagination"><button id="observation-previous" type="button" aria-label="Previous Jev exchange page">←</button><span id="observation-page" aria-live="polite">Page 1 of 1</span><button id="observation-next" type="button" aria-label="Next Jev exchange page">→</button></div>
           </section>
           <section id="actions-panel" class="data-panel" data-panel="actions" aria-labelledby="actions-heading">
             <div class="panel-heading"><h2 id="actions-heading">Available actions <span id="actions-count" class="count">0</span></h2><div class="panel-tools"><button type="button" data-expand="actions" aria-label="Expand available actions" aria-pressed="false">⤢</button></div></div>
@@ -80,7 +87,7 @@
         <div class="visibility-options">
           <label data-agent-only hidden><input type="checkbox" data-visibility="agent" checked> Agent overview</label>
           <label><input type="checkbox" data-visibility="state" checked> Game state</label>
-          <label data-agent-only hidden><input type="checkbox" data-visibility="observation" checked> Observation</label>
+          <label data-agent-only hidden><input type="checkbox" data-visibility="observation" checked> Jev exchange</label>
           <label><input type="checkbox" data-visibility="actions" checked> Available actions</label>
         </div>
         <h3>Game display</h3>

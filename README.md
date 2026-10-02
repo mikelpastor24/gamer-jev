@@ -242,11 +242,16 @@ sum, the allowed rounding tolerance, and the selected and highest probabilities.
 For direct TypeSafe responses on a two-decimal grid, the sum check allows half a
 hundredth per option, capped at 0.05. This handles the rounded probabilities
 observed in local sessions; higher-precision responses retain the stricter check.
-Zero distributions, missing or invalid probabilities, unlisted choices, and a
-choice below the highest returned probability still stop the session. The
+Zero distributions, missing or invalid probabilities, and unlisted choices
+still stop the session. The
 [TypeSafe Choice contract](https://docs.typesafe.ai/api#choice-answer) identifies
-`choice` as the highest-probability option. The runtime preserves that returned
-choice and records probability values without normalizing them.
+`choice` as the highest-probability option. Direct responses observed locally
+have sometimes selected a listed action with a lower returned probability.
+The runtime treats the explicit `choice` as Jev's gameplay decision, preserves
+it, and records a `choice-probability-mismatch` warning when the distribution
+ranks another action higher. It does not replace the choice with an argmax or
+make another model request. Probability values are recorded without normalizing
+them. Current action availability and frame bounds are always enforced.
 
 Live state-only mode sends structured state to the selected Jev service. Gateway
 vision additionally sends screenshots to its visual model; mock vision runs
@@ -268,7 +273,7 @@ PNG screenshot downloads, stereo sound, mute, and volume controls. Inputs are cl
 expire on the server if the viewer disconnects.
 
 The viewer uses a dashboard that fits the window, with separate cards for agent
-status, local game state, observations, and available actions. **Settings** opens
+status, local game state, Jev exchanges, and available actions. **Settings** opens
 a dialog with display preferences and session tools. Show or hide cards and
 controller buttons, or select **Game only** for more display space. **⤢** expands
 a card. Pause/resume and the camera button for PNG screenshots stay beside the
@@ -281,6 +286,24 @@ inspect a choice and never execute it. **Fields** lets you hide individual state
 values. Panel and field visibility are remembered in this browser, with field
 preferences kept separately for each reader. **Reset layout & fields** restores
 the defaults. These preferences do not alter observations sent to Jev.
+
+During agent sessions, **Jev exchange** pairs each decision's **Input** and
+**Response** by request number and emulator frame. The input sections show
+objectives, semantic game state, observations, available actions, recent history,
+the typed question, and the request JSON. Response sections show the selected
+action, confidence, probabilities, model, token usage, validation warnings, and
+the normalized decision. **Response fields** shows the supported fields received
+from the provider, including rejected responses when available. Mock sessions
+show their local context and decision without making network requests.
+
+**Latest result** keeps the last completed pair visible while the next request
+is pending. Choose **Current request** or **Last completed** to inspect either
+pair explicitly. Errors and cancellations remain visible; reset and checkpoint
+restore clear both pairs. Expand the card and use its section selector and page
+arrows for long content. Only the current and last completed exchanges are kept,
+with a 1 MiB limit per inspected object. Viewing them does not call a model or
+advance the emulator. Credentials and transport headers are excluded, and
+exchange contents are not saved in browser storage.
 
 ```sh
 npm start -- --rom "roms/my-game.gb" --paused --speed 1 --port 8787

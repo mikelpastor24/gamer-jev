@@ -73,5 +73,24 @@ export interface VisionProvider {
   observe(frame: Frame, previous: Frame | undefined, objectives: Objectives, signal: AbortSignal): Promise<VisualObservation>;
 }
 export interface DecisionProvider {
-  decide(context: DecisionContext, signal: AbortSignal): Promise<Decision>;
+  decide(context: DecisionContext, signal: AbortSignal, inspect?: DecisionInspectionSink): Promise<Decision>;
+}
+
+export type DecisionInspectionEvent =
+  | { readonly type: "request" | "response"; readonly data: Readonly<Record<string, unknown>> }
+  | { readonly type: "warning"; readonly message: string };
+export type DecisionInspectionSink = (event: DecisionInspectionEvent) => void;
+
+/** One bounded request/response pair. Transport headers and credentials are never included. */
+export interface DecisionExchange {
+  readonly id: number;
+  readonly frame: number;
+  readonly provider: DecisionProviderId;
+  readonly status: "pending" | "complete" | "error" | "cancelled";
+  readonly request: Readonly<Record<string, unknown>>;
+  readonly response: Readonly<Record<string, unknown>> | null;
+  readonly decision: Readonly<Record<string, unknown>> | null;
+  readonly warnings: readonly string[];
+  readonly error: string | null;
+  readonly durationMs: number | null;
 }

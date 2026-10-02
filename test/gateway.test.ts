@@ -4,6 +4,7 @@ import { createGatewayDecisionProvider } from "../src/jev/gateway.js";
 import { createGatewayVisionProvider } from "../src/vision/gateway.js";
 import { RequestBudget } from "../src/providers/requests.js";
 import { controllerActions } from "../src/runner/agent-session.js";
+import type { DiagnosticEvent } from "../src/core/diagnostics.js";
 
 function createGatewayProviders(options: { apiKey: string; visionModel: string; jevModel: string; budget: RequestBudget; fetch?: typeof globalThis.fetch }) {
   return { decider: createGatewayDecisionProvider({ ...options, model: options.jevModel }),
@@ -79,7 +80,7 @@ test("malformed probabilities, confidence, and visual observations cannot become
     observation: "Menu", unchangedScreens: 0, history: [], actions: controllerActions(["START"], 24) };
   const invalid = [
     { answers: { next_action: { type: "choice", choice: "press_start", probabilities: { press_start: 1 } } } },
-    { answers: { next_action: { type: "choice", choice: "press_start", probabilities: { press_start: 0, wait: 1, stop: 0 } } } },
+    { answers: { next_action: { type: "choice", choice: "press_start", probabilities: { press_start: -0.1, wait: 1.1, stop: 0 } } } },
     { answers: { next_action: { type: "choice", choice: "press_start", probabilities: { press_start: 0, wait: 0, stop: 0 } } } },
     { answers: { next_action: { type: "choice", choice: "press_start" } }, providerMetadata: { typesafe: { confidence: { next_action: 2 } } } },
   ];
@@ -97,4 +98,22 @@ test("malformed probabilities, confidence, and visual observations cannot become
   });
   await assert.rejects(providers.observer.observe({ number: 1, width: 1, height: 1, format: "rgba8888", pixels: new Uint8Array(4) },
     undefined, context.objectives, new AbortController().signal), /empty/);
+});
+
+test("Gateway preserves a listed Jev choice and warns about a different distribution ranking", async () => {
+  const events: DiagnosticEvent[] = [];
+  const probabilities = { press_start: 0.1, wait: 0.9, stop: 0 };
+  const budget = new RequestBudget({ maxRequests: 2, timeoutMs: 1000, intervalMs: 0, retries: 0 });
+  const provider = createGatewayDecisionProvider({ apiKey: "test-key", model: "typesafe-ai/jev", budget,
+    diagnostics: (event) => { events.push(event); },
+    fetch: async () => Response.json({ answers: { next_action: { type: "choice", choice: "press_start", probabilities } } }),
+  });
+  const context = { objectives: { goal: "Test", constraints: [], milestones: [] }, console: "test", frame: 42,
+    observation: "Menu", unchangedScreens: 0, history: [], actions: controllerActions(["START"], 8) };
+  const decision = await provider.decide(context, new AbortController().signal);
+  assert.equal(decision.actionId, "press_start"); assert.deepEqual(decision.probabilities, probabilities);
+  assert.equal(budget.requests, 1);
+  const warning = events.find((event) => event.event === "choice-probability-mismatch")!;
+  assert.equal(warning.level, "warn"); assert.equal(warning.frame, 42);
+  assert.deepEqual(warning.data!.highestProbabilityActions, ["wait"]);
 });

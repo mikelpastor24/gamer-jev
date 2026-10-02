@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import type { ActionRecord, AgentAction, Decision, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
+import type { ActionRecord, AgentAction, Decision, DecisionExchange, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
 import type { Emulator, Frame } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
 import { AgentFailure, RequestBudget } from "../providers/requests.js";
 import type { DiagnosticEvent, DiagnosticSink } from "../core/diagnostics.js";
+import { redactLogEvent } from "../core/redaction.js";
 export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
@@ -19,6 +20,7 @@ export interface AgentSessionOptions {
   readonly maxSeconds: number;
   readonly record?: (event: unknown) => void;
   readonly diagnostics?: DiagnosticSink;
+  readonly redactInspection?: (value: unknown) => unknown;
 }
 
 
@@ -39,6 +41,10 @@ export class AgentSession {
   private inputTokens = 0;
   private outputTokens = 0;
   private reason: string | null = null;
+  private exchange: DecisionExchange | null = null;
+  private completedExchange: DecisionExchange | null = null;
+  private exchangeRevision = 0;
+  private exchangeSequence = 0;
   private readonly actions: readonly AgentAction[];
   private readonly visionProvider: VisionProviderId;
   private readonly deadline: number;
@@ -71,8 +77,12 @@ export class AgentSession {
       inputTokens: this.inputTokens, outputTokens: this.outputTokens,
       observation: this.observation, action: this.decision?.actionId ?? null,
       confidence: this.decision?.confidence ?? null, unchangedScreens: this.unchangedScreens,
+      exchange: { revision: this.exchangeRevision, id: this.exchange?.id ?? null, frame: this.exchange?.frame ?? null, status: this.exchange?.status ?? null },
       stopReason: this.reason, completion: "unverified" };
   }
+
+  get inspection() { return { revision: this.exchangeRevision, exchange: structuredClone(this.exchange),
+    completed: this.completedExchange?.id !== this.exchange?.id ? structuredClone(this.completedExchange) : null }; }
 
   pause(): void {
     if (this.terminal) return;
@@ -93,6 +103,7 @@ export class AgentSession {
     this.options.observer.reset?.();
     this.history = []; this.previous = undefined; this.screenHash = undefined;
     this.unchangedScreens = 0; this.observation = ""; this.decision = undefined; this.gameState = undefined;
+    this.exchange = null; this.completedExchange = null; this.exchangeRevision++;
     this.record({ type: "timeline-reset", frame: this.emulator.frameNumber });
     this.diagnose("info", "timeline-reset", { generation: this.generation });
   }
@@ -100,6 +111,7 @@ export class AgentSession {
   stop(reason: string, failed = false): void {
     if (this.terminal) return;
     const stage = this.state;
+    if (failed && this.exchange?.status === "pending") this.updateExchange({ status: "error", error: reason });
     this.cancelActive();
     this.state = failed ? "error" : "stopped"; this.reason = reason;
     clearTimeout(this.deadlineTimer);
@@ -161,12 +173,25 @@ export class AgentSession {
     this.diagnose("debug", "decision-requested", { generation, sequence: this.decisions + 1, context,
       observationModel: observation.model, observationUsage: observation.usage, requests: this.options.budget.requests });
     const started = performance.now();
-    const decision = await this.options.decider.decide(context, signal);
+    const exchangeId = ++this.exchangeSequence;
+    this.exchange = { id: exchangeId, frame: frame.number, provider: this.options.mode, status: "pending",
+      request: this.inspectData({ state: context }), response: null, decision: null, warnings: [], error: null, durationMs: null };
+    this.exchangeRevision++;
+    const decision = await this.options.decider.decide(context, signal, (event) => {
+      if (signal.aborted || generation !== this.generation || this.exchange?.id !== exchangeId) return;
+      if (event.type === "warning") {
+        const safe = this.inspectData({ message: event.message.slice(0, 500) });
+        this.updateExchange({ warnings: [...this.exchange.warnings, String(safe.message)].slice(-8) });
+      } else this.updateExchange({ [event.type]: this.inspectData(event.data) });
+    });
     if (signal.aborted || generation !== this.generation) { this.diagnose("debug", "decision-discarded", { generation }); return; }
     const action = actions.find((candidate) => candidate.id === decision.actionId);
     if (!action) throw new AgentFailure("Jev selected an action outside the supplied controller action set.");
     if (decision.confidence !== null && (!Number.isFinite(decision.confidence) || decision.confidence < 0 || decision.confidence > 1)) throw new AgentFailure("Invalid Jev confidence.");
     this.decisions++; this.decision = decision;
+    this.updateExchange({ status: "complete", decision: this.inspectData({ ...decision }),
+      response: this.exchange!.response ?? this.inspectData({ ...decision }), durationMs: Number((performance.now() - started).toFixed(3)) });
+    this.completedExchange = this.exchange;
     this.inputTokens += decision.usage.inputTokens; this.outputTokens += decision.usage.outputTokens;
     this.record({ type: "decision", context, observation, decision, screenHash: hash });
     this.diagnose("info", "decision-selected", { generation, sequence: this.decisions, decision,
@@ -189,6 +214,7 @@ export class AgentSession {
   }
 
   private cancelActive(): void {
+    if (this.exchange?.status === "pending") this.updateExchange({ status: "cancelled", error: "Decision request cancelled. Its response will not be executed." });
     this.generation++; this.controller?.abort();
     this.finishAction(true); this.active = undefined;
   }
@@ -196,5 +222,15 @@ export class AgentSession {
   private record(event: unknown): void { this.options.record?.(event); }
   private diagnose(level: DiagnosticEvent["level"], event: string, data: Readonly<Record<string, unknown>>): void {
     this.options.diagnostics?.({ component: "agent", level, event, frame: this.emulator.frameNumber, data });
+  }
+  private updateExchange(change: Partial<DecisionExchange>): void {
+    if (this.exchange) { this.exchange = { ...this.exchange, ...change }; this.exchangeRevision++; }
+  }
+  private inspectData(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+    try {
+      const json = JSON.stringify(this.options.redactInspection?.(value) ?? redactLogEvent(value));
+      if (Buffer.byteLength(json) <= 1024 * 1024) return JSON.parse(json) as Record<string, unknown>;
+      return { unavailable: "Inspection data exceeds the 1 MiB limit." };
+    } catch { return { unavailable: "Inspection data could not be serialized." }; }
   }
 }

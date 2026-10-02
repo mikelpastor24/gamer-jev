@@ -82,6 +82,16 @@ dd { margin: 0; font-size: 12px; font-weight: 600; font-variant-numeric: tabular
 .decision-strip strong { color: var(--green); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stop-reason { padding: 0; background: none; border: none; text-align: left; font-size: 10px; color: #a13c30; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 .observation-body { overflow: hidden; }
+.exchange-controls { display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; flex-shrink: 0; min-width: 0; }
+.exchange-tabs { display: flex; gap: 3px; flex-shrink: 0; }
+.exchange-tabs button { border: 0; background: transparent; color: var(--muted); padding: 6px 8px; font-size: 11px; }
+.exchange-tabs button[aria-selected="true"] { background: #e8eee4; color: var(--green); }
+#exchange-section { font: inherit; font-size: 10px; border: 1px solid var(--line); border-radius: 6px; padding: 5px; background: white; color: var(--ink); min-width: 0; flex: 1; }
+.exchange-meta-row { display: flex; gap: 8px; align-items: center; margin: 7px 14px 0; min-width: 0; flex-shrink: 0; }
+#exchange-request { font: inherit; font-size: 10px; max-width: 105px; color: var(--muted); border: 0; padding: 2px 0; background: transparent; }
+.exchange-meta-row .panel-subtitle { margin: 0; min-width: 0; flex: 1; }
+.observation-body[data-format="json"] #agent-observation { font-family: Consolas, monospace; font-size: 11px; line-height: 1.6; }
+#exchange-meta[data-status="error"], #exchange-meta[data-status="cancelled"] { color: #a13c30; }
 #agent-observation, .detail-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; margin: 0; }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 20px; flex: 0 0 auto; }
 #message { color: var(--muted); font-size: 10px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
