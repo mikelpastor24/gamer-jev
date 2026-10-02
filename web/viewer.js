@@ -1,5 +1,6 @@
 import { AudioPlayer } from "./audio.js";
 import { createInspector } from "./inspector.js";
+import { createAgentSettingsEditor } from "./agent-settings.js";
 
 const canvas = document.querySelector("#screen");
 const context = canvas.getContext("2d");
@@ -15,6 +16,7 @@ const audio = new AudioPlayer();
 let audioSupported = false;
 let agentMode = false;
 const inspector = createInspector((visible) => { if (!visible) clearInput(); });
+createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
@@ -114,8 +116,8 @@ function renderStatus(status) {
     document.querySelector("#vision-provider").textContent = agent.visionProvider === "none" ? "Disabled" : liveVision ? "Vercel" : "Mock";
     document.querySelector("#agent-goal").textContent = agent.goal;
     document.querySelector("#agent-state").textContent = agent.state;
-    document.querySelector("#agent-decisions").textContent = `${agent.decisions} / ${agent.maxDecisions}`;
-    document.querySelector("#agent-requests").textContent = `${agent.requests} / ${agent.maxRequests}`;
+    document.querySelector("#agent-decisions").textContent = `${agent.decisions} / ${agent.maxDecisions ?? "∞"}`;
+    document.querySelector("#agent-requests").textContent = `${agent.requests} / ${agent.maxRequests ?? "∞"}`;
     document.querySelector("#agent-action").textContent = agent.action?.replace(/^press_/, "").replaceAll("_", " + ").toUpperCase() ?? "Waiting";
     document.querySelector("#agent-confidence").textContent = agent.confidence === null ? "Unavailable" : `${Math.round(agent.confidence * 100)}%`;
     document.querySelector("#agent-stop").textContent = agent.stopReason ?? "";

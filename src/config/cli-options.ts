@@ -9,7 +9,7 @@ export interface CliOptions {
   romPath: string | undefined;
   demo: boolean;
   headless: boolean;
-  frames: number;
+  frames: number | null;
   buttons: string[];
   port: number;
   speed: number;
@@ -24,9 +24,9 @@ export interface CliOptions {
   profile: string | undefined;
   goal: string | undefined;
   objectivesPath: string | undefined;
-  decisions: number;
-  requests: number;
-  maxSeconds: number;
+  decisions: number | null;
+  requests: number | null;
+  maxSeconds: number | null;
   actionFrames: number;
 }
 
@@ -36,6 +36,10 @@ function integer(value: string, name: string, minimum: number, maximum: number):
     throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
   }
   return parsed;
+}
+
+function sessionLimit(value: string, name: string, maximum: number): number | null {
+  return value === "unlimited" ? null : integer(value, name, 1, maximum);
 }
 
 export function parseCliOptions(args: string[]): CliOptions {
@@ -66,6 +70,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     requests: { type: "string", default: "300" },
     "max-seconds": { type: "string", default: "300" },
     "action-frames": { type: "string", default: "24" },
+    unlimited: { type: "boolean" },
   }, strict: true, allowPositionals: false });
   const speed = Number(values.speed);
   if (!values.speed.trim() || !Number.isFinite(speed) || speed <= 0 || speed > 8) {
@@ -89,8 +94,11 @@ export function parseCliOptions(args: string[]): CliOptions {
     if (values.profile !== undefined && !values.profile.trim()) throw new Error("--profile requires a registered ID or JSON file path.");
     if (values.agent && Boolean(values.goal) === Boolean(values.objectives)) throw new Error("Agent mode requires exactly one of --goal <text> or --objectives <path>.");
     if (values.agent && values.buttons !== undefined) throw new Error("--buttons cannot be combined with agent mode.");
-    if (!values.agent && (values.goal !== undefined || values.objectives !== undefined || args.some((arg) => /^--(decisions|requests|max-seconds|action-frames)(=|$)/.test(arg)))) {
+    if (!values.agent && (values.unlimited || values.goal !== undefined || values.objectives !== undefined || args.some((arg) => /^--(decisions|requests|max-seconds|action-frames)(=|$)/.test(arg)))) {
       throw new Error("Objectives and agent limits require --agent typesafe, --agent gateway, or --agent mock.");
+    }
+    if (values.unlimited && args.some((arg) => /^--(decisions|requests|max-seconds)(=|$)/.test(arg))) {
+      throw new Error("Use --unlimited or individual agent limits, rather than combining them.");
     }
   }
   const visionProvider = (values.vision ?? (values.observation === "state" || !values.agent ? "none" :
@@ -103,7 +111,8 @@ export function parseCliOptions(args: string[]): CliOptions {
     romPath: values.rom,
     demo: values.demo ?? false,
     headless: values.headless ?? false,
-    frames: integer(values.frames ?? (values.agent ? "1000000" : "120"), "--frames", 1, 1_000_000),
+    frames: values.agent && (values.frames === "unlimited" || values.unlimited && values.frames === undefined) ? null :
+      integer(values.frames ?? (values.agent ? "1000000" : "120"), "--frames", 1, 1_000_000),
     buttons: values.buttons === undefined ? [] : values.buttons.split(",").map((button) => button.trim().toUpperCase()),
     port: integer(values.port, "--port", 1, 65535),
     speed,
@@ -118,9 +127,9 @@ export function parseCliOptions(args: string[]): CliOptions {
     profile: values.profile,
     goal: values.goal,
     objectivesPath: values.objectives,
-    decisions: integer(values.decisions, "--decisions", 1, 10_000),
-    requests: integer(values.requests, "--requests", 1, 10_000),
-    maxSeconds: integer(values["max-seconds"], "--max-seconds", 1, 86_400),
+    decisions: values.unlimited ? null : sessionLimit(values.decisions, "--decisions", 10_000),
+    requests: values.unlimited ? null : sessionLimit(values.requests, "--requests", 10_000),
+    maxSeconds: values.unlimited ? null : sessionLimit(values["max-seconds"], "--max-seconds", 86_400),
     actionFrames: integer(values["action-frames"], "--action-frames", 1, 600),
   };
 }
@@ -133,8 +142,8 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --list-profiles      List registered game readers
   --rom <path>         Your local Game Boy ROM
   --demo               Run the original synthetic demo ROM
-  --headless           Run a finite number of frames without a viewer
-  --frames <count>     Headless frame count (default: 120)
+  --headless           Run without a viewer
+  --frames <count>     Headless frame ceiling; unlimited requires an agent (default: 120)
   --buttons <names>    Headless held inputs, e.g. RIGHT,A
   --port <number>      Local viewer port (default: 8787)
   --speed <factor>     Viewer speed, greater than 0 and at most 8 (default: 1)
@@ -150,9 +159,10 @@ export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
   --profile <id/path>  Registered game reader or a JSON memory profile
   --goal <text>        Primary objective for the agent
   --objectives <path>  JSON objectives instead of --goal
-  --decisions <count>  Agent decision limit (default: 100)
-  --requests <count>   Combined vision/Jev attempt limit (default: 300)
-  --max-seconds <n>    Agent wall-clock limit, including pauses (default: 300)
+  --decisions <count>  Agent decision limit, or unlimited (default: 100)
+  --requests <count>   Combined vision/Jev attempt limit, or unlimited (default: 300)
+  --max-seconds <n>    Agent wall-clock limit, or unlimited; includes pauses (default: 300)
+  --unlimited         Disable agent ceilings and the default headless frame ceiling
   --action-frames <n>  Frames per chosen input, plus 4 release frames (default: 24)
   --help, -h           Show this help
 `;

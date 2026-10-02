@@ -5,8 +5,8 @@ import { controllerActions } from "../core/actions.js";
 
 /** Metadata is useful context for vision, but does not interpret a game's mechanics. */
 export function createEmulatorStateProvider(emulator: Emulator, actionFrames: number): GameStateProvider {
-  const actions = controllerActions(emulator.descriptor.buttons, actionFrames);
-  return { id: "emulator", read(frame) {
+  let actions = controllerActions(emulator.descriptor.buttons, actionFrames);
+  return { id: "emulator", setActionFrames(frames) { actions = controllerActions(emulator.descriptor.buttons, frames); }, read(frame) {
     if (frame.number !== emulator.frameNumber) throw new Error("Cannot combine state and a screenshot from different frames.");
     return { state: { source: "emulator", frame: frame.number, values: {
       console: emulator.descriptor.consoleId, romTitle: emulator.rom.title,
@@ -17,7 +17,7 @@ export function createEmulatorStateProvider(emulator: Emulator, actionFrames: nu
 }
 
 export function createStateObserver(provider: GameStateProvider): ObservationProvider {
-  return { kind: "state", reset() { provider.reset?.(); }, async observe(frame, _previous, _objectives, signal) {
+  return { kind: "state", reset() { provider.reset?.(); }, setActionFrames(frames) { provider.setActionFrames?.(frames); }, async observe(frame, _previous, _objectives, signal) {
     signal.throwIfAborted();
     const snapshot = provider.read(frame);
     return { text: `Structured game state from ${snapshot.state.source} (full values in gameState): ${JSON.stringify(snapshot.state.values).slice(0, 5700)}`,

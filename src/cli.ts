@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     if (options.headless) {
       const initialFrame = emulator.frameNumber;
       if (session) await runAgentHeadless(emulator, session, controller.signal, options.frames);
-      else await runHeadless(emulator, options.frames, options.buttons, controller.signal);
+      else await runHeadless(emulator, options.frames!, options.buttons, controller.signal);
       if (options.screenshotPath) await saveScreenshot(emulator.captureFrame(), options.screenshotPath);
       if (options.savePath) await saveStateFile(emulator, options.savePath);
       console.log(`Completed ${emulator.frameNumber - initialFrame} frames. Current frame: ${emulator.frameNumber}.${controller.signal.aborted ? " Interrupted." : ""}`);

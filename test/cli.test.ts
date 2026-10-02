@@ -12,7 +12,7 @@ test("CLI accepts local ROM paths with spaces and normalizes button names", () =
   assert.deepEqual(options.buttons, ["RIGHT", "A"]);
 });
 
-test("CLI rejects ambiguous sources, ignored options, and unbounded execution", () => {
+test("CLI rejects ambiguous sources, ignored options, and unbounded manual headless execution", () => {
   for (const args of [[], ["--demo", "--rom", "rom.gb"], ["--demo", "--frames", "10"],
     ["--demo", "--headless", "--frames", "0"], ["--demo", "--speed", "Infinity"],
     ["--demo", "--port", "0"], ["--demo", "--headless", "--paused"], ["--demo", "--unknown"]]) {

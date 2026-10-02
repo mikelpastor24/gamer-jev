@@ -32,7 +32,7 @@ Decisions can use direct TypeSafe, Vercel AI Gateway, or mock; vision independen
 uses Gateway, mock, or is disabled. They share bounded JSON transport and a request
 budget in `src/providers/`. Provider factories read only their own settings. Observation
 composition lives in `src/observation/`. A deterministic mock
-works offline. Objectives, bounded sessions, recent history, JSONL records,
+works offline. Objectives, configurable session limits, recent history, JSONL records,
 viewer inspection, and headless agent execution are implemented. Game readers
 use the Strategy contract in `src/core/game-reader.ts`, a ROM-aware registry,
 and TypeScript or declarative JSON implementations in `src/profiles/`. The
@@ -46,6 +46,14 @@ Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
 manual-session records. Redact credentials, exclude raw provider response bodies,
 deduplicate unchanged reader snapshots, and cap each recording at 32 MiB.
+
+The viewer's Settings → Agent editor changes objectives and session ceilings
+without restarting. Updates pause the agent, cancel pending work, preserve
+counters and elapsed time, and propagate action duration to the observation
+strategy. Validate complete updates and their revision before applying them.
+Explicit `--unlimited` or null ceilings disable session limits; action durations,
+HTTP timeouts, retries, payloads, history, and recordings stay bounded. Jev's stop
+action remains unverified completion until a profile supplies verified progress.
 
 Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
 ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses

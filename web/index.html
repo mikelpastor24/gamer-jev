@@ -81,6 +81,7 @@
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
         <button id="view-tab" type="button" role="tab" aria-selected="true" aria-controls="settings-view" data-settings-tab="view">Display</button>
         <button id="session-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-session" data-settings-tab="session" tabindex="-1">Session</button>
+        <button id="agent-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-agent" data-settings-tab="agent" data-agent-only hidden tabindex="-1">Agent</button>
       </div>
       <section id="settings-view" class="settings-body" role="tabpanel" aria-labelledby="view-tab">
         <h3>Visible panels</h3>
@@ -109,6 +110,31 @@
         <div class="settings-actions"><button id="save" type="button">Save checkpoint</button><button id="load" type="button">Restore checkpoint</button></div>
         <h3>Emulation</h3>
         <div class="settings-actions"><button id="step" type="button">Step one frame</button><button id="reset" class="quiet" type="button">Reset cartridge</button></div>
+      </section>
+      <section id="settings-agent" class="settings-body" role="tabpanel" aria-labelledby="agent-tab" hidden>
+        <form id="agent-settings-form" novalidate>
+          <fieldset id="agent-settings-fields" disabled>
+            <label class="agent-section-choice" for="agent-settings-section">Edit <select id="agent-settings-section"><option value="objectives">Objectives</option><option value="limits">Limits</option></select></label>
+            <div id="agent-objectives" class="agent-settings-fields">
+              <label for="agent-goal-input">Objective<textarea id="agent-goal-input" rows="2" maxlength="2000" required></textarea></label>
+              <label for="agent-constraints-input">Constraints<textarea id="agent-constraints-input" rows="3" maxlength="8015" placeholder="One constraint per line"></textarea></label>
+              <label for="agent-milestones-input">Milestones <span class="optional">Optional</span><textarea id="agent-milestones-input" rows="2" maxlength="8015" placeholder="One milestone per line"></textarea></label>
+            </div>
+            <div id="agent-limits" class="agent-settings-fields" hidden>
+              <label class="unlimited-choice"><input id="agent-unlimited" type="checkbox"> No session limits</label>
+              <div class="agent-limit-grid">
+                <label for="agent-limit-decisions">Decisions<input id="agent-limit-decisions" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></label>
+                <label for="agent-limit-requests">Model requests<input id="agent-limit-requests" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></label>
+                <label for="agent-limit-seconds">Session seconds<input id="agent-limit-seconds" type="number" min="1" max="86400" step="1" placeholder="Unlimited"></label>
+                <label for="agent-action-frames">Action frames<input id="agent-action-frames" type="number" min="1" max="600" step="1" required></label>
+              </div>
+              <p class="agent-settings-hint">Blank disables a limit. Limits apply to total counts and elapsed time, including pauses. Actions remain bounded.</p>
+              <p class="agent-settings-hint">Jev can choose to stop. Game completion remains unverified.</p>
+            </div>
+          </fieldset>
+          <p class="agent-settings-hint">Applying changes pauses the agent. Resume when ready.</p>
+          <div class="settings-actions"><button id="apply-agent-settings" class="primary" type="submit" disabled>Apply changes</button><button id="reload-agent-settings" class="quiet" type="button">Reload settings</button></div>
+        </form>
       </section>
       <p id="settings-message" role="status" aria-live="polite" hidden></p>
     </dialog>

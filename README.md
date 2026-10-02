@@ -6,7 +6,7 @@ of an emulated game. Inspired by
 [jev-pokemon](https://github.com/christianmat/jev-pokemon).
 
 Implemented: Game Boy emulation, stereo audio, a local viewer, checkpoints,
-and a bounded agent loop with structured game state, Jev decisions, and optional
+and an agent loop with configurable session limits, structured game state, Jev decisions, and optional
 visual perception. Game readers use interchangeable strategies selected by
 console and ROM hash. Jev can use direct TypeSafe or Vercel AI Gateway; vision
 is configured independently. Manual and fully mocked sessions need no credentials.
@@ -200,6 +200,34 @@ npm start -- --rom "roms/my-game.gb" --agent gateway --goal "Reach gameplay" --h
 | `--action-frames` | 24 | Input duration; held inputs also get 4 release frames |
 | `--frames` | 1,000,000 in agent mode | Additional headless frame limit |
 
+Agent ceilings accept `unlimited` instead of a number. **Settings → Agent** also
+lets you edit objectives, constraints, milestones, action duration, and the three
+session ceilings while the viewer is running. Choose **Objectives** or **Limits**
+in the editor; enter one constraint or milestone per line. Leave a ceiling blank
+to disable it individually, or select **No session limits** to disable all three.
+Use **Apply changes**, close Settings, and **Resume**. Saving pauses the agent,
+interrupts active inputs, and cancels pending observations/decisions so that the
+next request uses the new objective and action set. Profiles can still choose
+their own bounded action durations. Changes are recorded in the local JSONL log;
+the objectives file and browser storage are not rewritten.
+
+For a session without decision, request, or time ceilings from startup:
+
+```sh
+npm start -- --rom "roms/my-game.gb" --agent typesafe --vision none --goal "Finish the game" --unlimited
+```
+
+`--unlimited` also removes the default headless frame ceiling. An explicit
+`--frames <count>` still applies; headless agent runs can alternatively use
+`--frames unlimited`. Individual `--decisions unlimited`, `--requests unlimited`,
+and `--max-seconds unlimited` flags leave the other ceilings in place. Keep
+`--unlimited` separate from those three individual options.
+
+Unlimited sessions still honor pause, Ctrl+C, provider failures, and Jev's
+explicit stop action. HTTP timeouts, retry bounds, action bounds, history sizes,
+and recording caps remain in effect. A stop chosen by Jev is **unverified
+completion**: no current reader verifies that the whole game has been finished.
+
 Requests have a 20-second timeout and a shared minimum interval of 250 ms.
 HTTP 429 and server errors retry once with bounded backoff. Authentication,
 malformed responses, and unlisted actions stop the session without fallback
@@ -207,10 +235,17 @@ inputs. These are request and execution limits, not a currency budget; requests
 already accepted by a provider may be billed even if cancelled. Gateway's own
 upstream routing is outside the application's attempt counter.
 
-Stopping at a limit leaves the viewer open for inspection. Start a new process
-for a new budget. Reset and restore clear visual/action history and discard
-pending responses while retaining the current session's counters. Checkpoints
-restore emulator state; they do not restore agent history or provider budgets.
+Stopping at a limit leaves the viewer open for inspection. Increase or disable
+the reached ceiling in **Settings → Agent** and apply the changes to continue
+from the current emulator state. Applying settings can also reopen a session
+after a Jev stop or provider error; it remains paused until you explicitly resume.
+Decision/request counters and elapsed time are retained. Time ceilings are total
+seconds since session startup, including pauses, rather than a new countdown
+after each edit. A ceiling below already consumed counts or time keeps the
+session stopped. Start a new process for fresh counters. Reset and restore clear
+visual/action history and discard pending responses while retaining the current
+session's counters. Checkpoints restore emulator state; they do not restore agent
+history, edited settings, or provider budgets.
 Milestones and a model-selected `stop` are not independently verified evidence
 of completion. A future game profile can supply explicit progress checks.
 

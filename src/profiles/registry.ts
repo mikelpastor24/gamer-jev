@@ -21,12 +21,14 @@ export function bindGameReader(reader: GameReader, emulator: Emulator, actionFra
     throw new Error(`Game reader ${reader.descriptor.id} is incompatible with this console or ROM revision.`);
   }
   if (!hasMemory(emulator)) throw new Error("This console adapter does not support memory-based game readers.");
-  const defaults = controllerActions(emulator.descriptor.buttons, actionFrames);
+  let defaults = controllerActions(emulator.descriptor.buttons, actionFrames);
   const memory = Object.freeze({ readMemory: (address: number, length: number) => emulator.readMemory(address, length) });
   let previous = "";
   diagnostics?.({ component: "game-reader", level: "info", event: "bound", frame: emulator.frameNumber,
     data: { reader: reader.descriptor.id, console: reader.descriptor.consoleId, romSha256: emulator.rom.sha256 } });
-  return { id: reader.descriptor.id, reset() {
+  return { id: reader.descriptor.id, setActionFrames(frames) {
+    defaults = controllerActions(emulator.descriptor.buttons, frames);
+  }, reset() {
     previous = "";
     reader.reset?.();
     diagnostics?.({ component: "game-reader", level: "info", event: "reset", frame: emulator.frameNumber, data: { reader: reader.descriptor.id } });

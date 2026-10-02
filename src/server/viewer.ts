@@ -23,12 +23,13 @@ export interface Viewer {
 }
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
-  const [html, css, javascript, audioJavascript, inspectorJavascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
     readFile(new URL("../../web/audio.js", import.meta.url)),
     readFile(new URL("../../web/inspector.js", import.meta.url)),
+    readFile(new URL("../../web/agent-settings.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
@@ -86,6 +87,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/viewer.js": [javascript, "text/javascript; charset=utf-8"],
         "/audio.js": [audioJavascript, "text/javascript; charset=utf-8"],
         "/inspector.js": [inspectorJavascript, "text/javascript; charset=utf-8"],
+        "/agent-settings.js": [agentSettingsJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];
@@ -101,6 +103,9 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         json(response, gameState.read(emulator.captureFrame()));
       } else if (path === "/api/jev-exchange") {
         json(response, agent?.inspection ?? { revision: 0, exchange: null });
+      } else if (path === "/api/agent-settings") {
+        if (!agent) json(response, { error: "Agent settings are unavailable during manual play." }, 400);
+        else json(response, agent.configuration);
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
         const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);
@@ -135,12 +140,19 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     let size = 0;
     for await (const chunk of request) {
       size += chunk.length;
-      if (size > 4096) throw new Error("Viewer commands must be smaller than 4 KiB.");
+      const maximum = path === "/api/agent-settings" ? 32_768 : 4096;
+      if (size > maximum) throw new Error(`Viewer commands must be at most ${maximum} bytes.`);
       chunks.push(chunk as Buffer);
     }
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
     if (!body || typeof body !== "object") throw new Error("Invalid command body.");
-    if (path === "/api/input") {
+    if (path === "/api/agent-settings") {
+      if (!agent) throw new Error("Agent settings are unavailable during manual play.");
+      const data = body as Record<string, unknown>;
+      if (Object.keys(data).some((key) => key !== "settings" && key !== "revision")) throw new Error("Invalid agent settings command.");
+      agent.updateSettings(data.settings, data.revision);
+      pause(); failure = null;
+    } else if (path === "/api/input") {
       const supplied = "buttons" in body ? body.buttons : undefined;
       if (!Array.isArray(supplied) || supplied.some((button: unknown) => typeof button !== "string")) throw new Error("Invalid buttons.");
       validateAction({ buttons: supplied, frames: 1 }, emulator.descriptor.buttons);

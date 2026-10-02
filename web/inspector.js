@@ -343,13 +343,16 @@ export function createInspector(onControllerVisibility) {
       tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
       query(`#settings-${tab.dataset.settingsTab}`).hidden = !selected;
     }
+    settings.dispatchEvent(new CustomEvent("settings-tab-change", { detail: name }));
   }
   for (const tab of document.querySelectorAll("[data-settings-tab]")) {
     tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
     tab.addEventListener("keydown", (event) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
-      const next = event.key === "Home" ? "view" : event.key === "End" ? "session" : tab.dataset.settingsTab === "view" ? "session" : "view";
+      const names = [...document.querySelectorAll("[data-settings-tab]")].filter((button) => !button.hidden).map((button) => button.dataset.settingsTab);
+      const index = names.indexOf(tab.dataset.settingsTab);
+      const next = event.key === "Home" ? names[0] : event.key === "End" ? names.at(-1) : names[(index + (event.key === "ArrowRight" ? 1 : names.length - 1)) % names.length];
       selectSettingsTab(next); query(`[data-settings-tab="${next}"]`).focus();
     });
   }

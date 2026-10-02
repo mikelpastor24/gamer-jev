@@ -9,6 +9,15 @@ export interface Objectives {
   readonly milestones: readonly string[];
 }
 
+/** Null disables a session ceiling; individual actions and HTTP requests remain bounded. */
+export interface AgentSettings {
+  readonly objectives: Objectives;
+  readonly maxDecisions: number | null;
+  readonly maxRequests: number | null;
+  readonly maxSeconds: number | null;
+  readonly actionFrames: number;
+}
+
 export interface AgentAction {
   readonly id: string;
   readonly description: string;
@@ -33,6 +42,7 @@ export interface GameStateProvider {
   readonly id: string;
   read(frame: Frame): StateSnapshot;
   reset?(): void;
+  setActionFrames?(frames: number): void;
 }
 export interface VisualObservation { readonly text: string; readonly model: string; readonly usage: ModelUsage }
 export interface Observation extends VisualObservation {
@@ -67,6 +77,7 @@ export interface ObservationProvider {
   readonly kind?: "state" | "vision" | "mock";
   observe(frame: Frame, previous: Frame | undefined, objectives: Objectives, signal: AbortSignal): Promise<Observation>;
   reset?(): void;
+  setActionFrames?(frames: number): void;
 }
 /** Visual perception cannot supply controller actions or overwrite memory-derived state. */
 export interface VisionProvider {

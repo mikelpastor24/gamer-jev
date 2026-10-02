@@ -4,7 +4,7 @@ import type { DiagnosticSink } from "../core/diagnostics.js";
 export class AgentFailure extends Error {}
 
 export interface RequestLimits {
-  readonly maxRequests: number;
+  readonly maxRequests: number | null;
   readonly timeoutMs: number;
   readonly intervalMs: number;
   readonly retries: number;
@@ -14,23 +14,34 @@ export interface RequestLimits {
 export class RequestBudget {
   requests = 0;
   private lastRequest = 0;
+  private requestLimits: RequestLimits;
 
-  constructor(readonly limits: RequestLimits, private readonly diagnostics?: DiagnosticSink) {
+  constructor(limits: RequestLimits, private readonly diagnostics?: DiagnosticSink) {
     for (const [name, number] of Object.entries(limits)) {
+      if (name === "maxRequests" && number === null) continue;
       if (!Number.isSafeInteger(number) || number < (name === "retries" || name === "intervalMs" ? 0 : 1)) {
         throw new Error(`Invalid request limit: ${name}.`);
       }
     }
     if (limits.retries > 2) throw new Error("At most two retries are supported.");
+    this.requestLimits = Object.freeze({ ...limits });
+  }
+
+  get limits(): RequestLimits { return this.requestLimits; }
+
+  setMaxRequests(value: number | null): void {
+    if (value !== null && (!Number.isSafeInteger(value) || value < 1 || value > 10_000)) throw new Error("Invalid model request limit.");
+    this.requestLimits = Object.freeze({ ...this.requestLimits, maxRequests: value });
   }
 
   async run<T>(kind: "Vision" | "Jev", signal: AbortSignal, request: (signal: AbortSignal) => Promise<T>, provider: "gateway" | "typesafe" = "gateway"): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       signal.throwIfAborted();
-      if (this.requests >= this.limits.maxRequests) throw new AgentFailure("Model request limit reached.");
+      this.checkLimit();
       const wait = Math.max(0, this.lastRequest + this.limits.intervalMs - Date.now());
       if (wait) await delay(wait, undefined, { signal });
       signal.throwIfAborted();
+      this.checkLimit();
       this.requests++;
       this.lastRequest = Date.now();
       const requestNumber = this.requests;
@@ -67,6 +78,10 @@ export class RequestBudget {
         throw new AgentFailure(`${kind} request failed${typeof status === "number" ? ` (HTTP ${status})` : ""}. Check provider access, credits, model availability, and network connectivity.`);
       }
     }
+  }
+
+  private checkLimit(): void {
+    if (this.limits.maxRequests !== null && this.requests >= this.limits.maxRequests) throw new AgentFailure("Model request limit reached.");
   }
 }
 

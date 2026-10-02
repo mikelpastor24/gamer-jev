@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import type { ActionRecord, AgentAction, Decision, DecisionExchange, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
+import type { ActionRecord, AgentAction, AgentSettings, Decision, DecisionExchange, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
 import type { Emulator, Frame } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
 import { AgentFailure, RequestBudget } from "../providers/requests.js";
 import type { DiagnosticEvent, DiagnosticSink } from "../core/diagnostics.js";
 import { redactLogEvent } from "../core/redaction.js";
+import { parseAgentSettings } from "../config/agent-settings.js";
 export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
@@ -16,8 +17,8 @@ export interface AgentSessionOptions {
   readonly decider: DecisionProvider;
   readonly budget: RequestBudget;
   readonly actionFrames: number;
-  readonly maxDecisions: number;
-  readonly maxSeconds: number;
+  readonly maxDecisions: number | null;
+  readonly maxSeconds: number | null;
   readonly record?: (event: unknown) => void;
   readonly diagnostics?: DiagnosticSink;
   readonly redactInspection?: (value: unknown) => unknown;
@@ -45,19 +46,19 @@ export class AgentSession {
   private completedExchange: DecisionExchange | null = null;
   private exchangeRevision = 0;
   private exchangeSequence = 0;
-  private readonly actions: readonly AgentAction[];
+  private actions: readonly AgentAction[];
+  private settings: AgentSettings;
+  private settingsRevision = 0;
   private readonly visionProvider: VisionProviderId;
-  private readonly deadline: number;
-  private readonly deadlineTimer: ReturnType<typeof setTimeout>;
+  private readonly startedAt = Date.now();
+  private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly emulator: Emulator, private readonly options: AgentSessionOptions) {
-    if (!Number.isSafeInteger(options.maxDecisions) || options.maxDecisions < 1 ||
-        !Number.isSafeInteger(options.maxSeconds) || options.maxSeconds < 1 || options.maxSeconds > 86400) throw new Error("Invalid agent session limits.");
+    this.settings = parseAgentSettings({ objectives: options.objectives, maxDecisions: options.maxDecisions,
+      maxSeconds: options.maxSeconds, maxRequests: options.budget.limits.maxRequests, actionFrames: options.actionFrames });
     this.actions = controllerActions(emulator.descriptor.buttons, options.actionFrames);
     this.visionProvider = options.visionProvider ?? (options.observer.kind === "state" ? "none" : options.mode === "mock" ? "mock" : "gateway");
-    this.deadline = Date.now() + options.maxSeconds * 1000;
-    this.deadlineTimer = setTimeout(() => this.stop("Session time limit reached."), options.maxSeconds * 1000);
-    this.deadlineTimer.unref();
+    this.scheduleDeadline();
     this.record({ type: "session", mode: options.mode, visionProvider: this.visionProvider,
       observationMode: options.observer.kind ?? "custom", objectives: options.objectives, romSha256: emulator.rom.sha256,
       console: emulator.descriptor.consoleId, controllerActions: this.actions, limits: {
@@ -70,10 +71,11 @@ export class AgentSession {
   get terminal(): boolean { return this.state === "stopped" || this.state === "error"; }
   get advancing(): boolean { return this.state === "acting" || this.state === "idle"; }
   get snapshot() {
-    return { mode: this.options.mode, visionProvider: this.visionProvider, state: this.state, goal: this.options.objectives.goal,
+    return { mode: this.options.mode, visionProvider: this.visionProvider, state: this.state, goal: this.settings.objectives.goal,
       observationMode: this.options.observer.kind ?? "custom", gameState: this.gameState ?? null,
-      decisions: this.decisions, maxDecisions: this.options.maxDecisions,
+      decisions: this.decisions, maxDecisions: this.settings.maxDecisions,
       requests: this.options.budget.requests, maxRequests: this.options.budget.limits.maxRequests,
+      maxSeconds: this.settings.maxSeconds, elapsedSeconds: Math.floor((Date.now() - this.startedAt) / 1000), settingsRevision: this.settingsRevision,
       inputTokens: this.inputTokens, outputTokens: this.outputTokens,
       observation: this.observation, action: this.decision?.actionId ?? null,
       confidence: this.decision?.confidence ?? null, unchangedScreens: this.unchangedScreens,
@@ -84,6 +86,27 @@ export class AgentSession {
   get inspection() { return { revision: this.exchangeRevision, exchange: structuredClone(this.exchange),
     completed: this.completedExchange?.id !== this.exchange?.id ? structuredClone(this.completedExchange) : null }; }
 
+  get configuration() { return { revision: this.settingsRevision, settings: this.inspectData({ ...this.settings }) }; }
+
+  /** Editing settings explicitly reopens an ended session, paused, without resetting any counters. */
+  updateSettings(value: unknown, revision: unknown): void {
+    const next = parseAgentSettings(value);
+    if (revision !== this.settingsRevision) throw new Error("Agent settings changed in another window. Reload the settings and try again.");
+    const actions = controllerActions(this.emulator.descriptor.buttons, next.actionFrames);
+    this.options.observer.setActionFrames?.(next.actionFrames);
+    this.cancelActive();
+    this.settings = next; this.actions = actions; this.settingsRevision++;
+    this.options.budget.setMaxRequests(next.maxRequests);
+    this.state = "paused"; this.reason = null;
+    this.observation = ""; this.gameState = undefined; this.decision = undefined;
+    this.record({ type: "session-settings", revision: this.settingsRevision, settings: next, frame: this.emulator.frameNumber,
+      decisions: this.decisions, requests: this.options.budget.requests });
+    this.diagnose("info", "settings-updated", { revision: this.settingsRevision, settings: next, generation: this.generation });
+    const exhausted = this.exhaustedLimit();
+    if (exhausted) this.stop(exhausted);
+    else this.scheduleDeadline();
+  }
+
   pause(): void {
     if (this.terminal) return;
     const previousState = this.state;
@@ -93,7 +116,9 @@ export class AgentSession {
   }
 
   resume(): void {
-    if (this.terminal) throw new Error("This agent session has ended. Start a new process for a new session and budget.");
+    if (this.terminal) throw new Error("This agent session has ended. Apply agent settings to continue with the current counters, or start a new process.");
+    const exhausted = this.exhaustedLimit();
+    if (exhausted) { this.stop(exhausted); throw new Error(exhausted); }
     if (this.state === "paused") { this.state = "idle"; this.diagnose("info", "resumed", { generation: this.generation }); }
   }
 
@@ -123,7 +148,7 @@ export class AgentSession {
   tick(frames: number): void {
     if (this.terminal || this.state === "paused") return;
     if (!Number.isSafeInteger(frames) || frames < 1 || frames > 600) throw new Error("Invalid agent tick frame count.");
-    if (Date.now() >= this.deadline) { this.stop("Session time limit reached."); return; }
+    if (this.settings.maxSeconds !== null && Date.now() - this.startedAt >= this.settings.maxSeconds * 1000) { this.stop("Session time limit reached."); return; }
     if (this.active) {
       const active = this.active;
       const held = Math.min(frames, active.remaining);
@@ -132,12 +157,14 @@ export class AgentSession {
       if (released) { this.emulator.advance({ buttons: [], frames: released }); active.release -= released; }
       if (!active.remaining && !active.release) {
         this.finishAction(false); this.active = undefined; this.state = "idle";
-        if (this.decisions >= this.options.maxDecisions) this.stop("Decision limit reached.");
+        const exhausted = this.exhaustedLimit();
+        if (exhausted) this.stop(exhausted);
       }
       return;
     }
     if (this.pending) return;
-    if (this.decisions >= this.options.maxDecisions) { this.stop("Decision limit reached."); return; }
+    const exhausted = this.exhaustedLimit();
+    if (exhausted) { this.stop(exhausted); return; }
     const generation = this.generation;
     this.controller = new AbortController();
     const signal = this.controller.signal;
@@ -155,7 +182,8 @@ export class AgentSession {
   private async choose(signal: AbortSignal, generation: number): Promise<void> {
     const frame = this.emulator.captureFrame();
     const hash = createHash("sha256").update(frame.pixels).digest("hex");
-    const observation = await this.options.observer.observe(frame, this.previous, this.options.objectives, signal);
+    const objectives = this.settings.objectives;
+    const observation = await this.options.observer.observe(frame, this.previous, objectives, signal);
     if (signal.aborted || generation !== this.generation) { this.diagnose("debug", "observation-discarded", { generation }); return; }
     if (typeof observation.text !== "string" || !observation.text.trim() || observation.text.length > 6000) throw new AgentFailure("Invalid visual observation.");
     this.observation = observation.text;
@@ -167,7 +195,7 @@ export class AgentSession {
     this.unchangedScreens = hash === this.screenHash ? this.unchangedScreens + 1 : 0;
     this.screenHash = hash; this.previous = frame;
     this.state = "thinking";
-    const context = { objectives: this.options.objectives, console: this.emulator.descriptor.consoleId,
+    const context = { objectives, console: this.emulator.descriptor.consoleId,
       frame: frame.number, observation: this.observation, unchangedScreens: this.unchangedScreens,
       history: [...this.history], actions, ...(this.gameState ? { gameState: structuredClone(this.gameState) } : {}) };
     this.diagnose("debug", "decision-requested", { generation, sequence: this.decisions + 1, context,
@@ -222,6 +250,21 @@ export class AgentSession {
   private record(event: unknown): void { this.options.record?.(event); }
   private diagnose(level: DiagnosticEvent["level"], event: string, data: Readonly<Record<string, unknown>>): void {
     this.options.diagnostics?.({ component: "agent", level, event, frame: this.emulator.frameNumber, data });
+  }
+  private exhaustedLimit(): string | null {
+    if (this.settings.maxSeconds !== null && Date.now() - this.startedAt >= this.settings.maxSeconds * 1000) return "Session time limit reached.";
+    if (this.settings.maxDecisions !== null && this.decisions >= this.settings.maxDecisions) return "Decision limit reached.";
+    if (this.options.budget.limits.maxRequests !== null && this.options.budget.requests >= this.options.budget.limits.maxRequests) return "Model request limit reached.";
+    return null;
+  }
+  private scheduleDeadline(): void {
+    clearTimeout(this.deadlineTimer); this.deadlineTimer = undefined;
+    if (this.settings.maxSeconds === null || this.terminal) return;
+    const remaining = this.settings.maxSeconds * 1000 - (Date.now() - this.startedAt);
+    this.deadlineTimer = setTimeout(() => {
+      if (this.settings.maxSeconds !== null && Date.now() - this.startedAt >= this.settings.maxSeconds * 1000) this.stop("Session time limit reached.");
+    }, Math.max(0, remaining));
+    this.deadlineTimer.unref();
   }
   private updateExchange(change: Partial<DecisionExchange>): void {
     if (this.exchange) { this.exchange = { ...this.exchange, ...change }; this.exchangeRevision++; }
