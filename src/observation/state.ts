@@ -17,7 +17,8 @@ export function createEmulatorStateProvider(emulator: Emulator, actionFrames: nu
 }
 
 export function createStateObserver(provider: GameStateProvider): ObservationProvider {
-  return { kind: "state", reset() { provider.reset?.(); }, setActionFrames(frames) { provider.setActionFrames?.(frames); }, async observe(frame, _previous, _objectives, signal) {
+  return { kind: "state", availableActions(frame) { return provider.read(frame).actions; },
+    reset() { provider.reset?.(); }, setActionFrames(frames) { provider.setActionFrames?.(frames); }, async observe(frame, _previous, _objectives, signal) {
     signal.throwIfAborted();
     const snapshot = provider.read(frame);
     return { text: `Structured game state from ${snapshot.state.source} (full values in gameState): ${JSON.stringify(snapshot.state.values).slice(0, 5700)}`,

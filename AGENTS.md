@@ -72,8 +72,13 @@ manual mode. New cartridges get fresh sessions. Reject stale viewer commands
 and inspection after mode/model edits as well as cartridge switches.
 
 Viewer speed is configurable at startup and in Settings → Session, up to 32×.
-Frame pacing scales its bounded batch with speed, discards provider wait time,
-and resets on speed edits and resume. Speed edits preserve pending agent work,
+Frame pacing scales its bounded batch with speed and resets on speed edits and
+resume. Viewer emulation and audio continue with buttons released during a single
+pending observation/decision. Recheck local reader action availability before
+execution; discard obsolete actions and request a fresh decision without pausing,
+while counting their responses toward limits. Record observation and execution
+frames separately. Headless requests retain deterministic frame counts.
+Speed edits preserve pending agent work,
 action durations, and pause state, and invalidate queued audio on both ends.
 
 Settings → ROMs loads regular .gb/.gbc files from the local roms/ folder, capped

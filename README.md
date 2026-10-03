@@ -413,9 +413,15 @@ When starting the viewer from TypeScript, pass `speed: 8` in `startViewer`'s
 options; call `viewer.setSpeed(8)` to change it later. Speed is a target relative to the approximately 59.73 Hz Game Boy frame
 rate. Actual throughput depends on your machine and the emulator. Higher speeds
 shorten controller execution between decisions; they do not shorten provider
-response times or change request throttling. Emulation waits while Jev or vision
-is processing, without accumulating gameplay frames to catch up afterward.
-Headless execution already runs without real-time pacing, so `--speed` applies
+response times or change request throttling. The viewer keeps emulation and audio
+running while vision or Jev responds, with all buttons released and only one
+observation/decision in flight. Each request uses a snapshot; before execution,
+the local GameReader checks that the chosen action and its inputs/duration are
+still available. An unavailable action is recorded and discarded, and Jev is
+asked again on a fresh snapshot without pausing. These responses still count
+toward session limits. Pauses, errors, configured limits, and Jev's stop action
+still stop playback. Headless execution waits for responses to keep frame counts
+deterministic and already runs without real-time pacing, so `--speed` applies
 to the viewer. Runtime speed edits are local to this process and appear in agent
 or debug JSONL records; checkpoints do not store the viewer's target speed.
 

@@ -302,10 +302,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     if (frames < 1) return;
     try {
       if (agent) {
-        const wasAdvancing = agent.advancing;
-        agent.tick(frames);
-        if (!agent.advancing) clock.reset(now);
-        if (wasAdvancing && !agent.advancing) { audioEpoch++; discardAudio(); }
+        agent.tick(frames, true);
       } else emulator.advance({ buttons, frames });
     }
     catch (error) {

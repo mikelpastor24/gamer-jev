@@ -3,15 +3,19 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import type { Decision, VisualObservation } from "../src/core/agent.js";
 import { PNG } from "pngjs";
 import { createDemoRom } from "../src/demo/rom.js";
 import { GameBoyEmulator } from "../src/emulator/game-boy/game-boy-emulator.js";
 import { startViewer } from "../src/server/viewer.js";
 import { createMockProviders } from "./fixtures/agent-providers.js";
-import { RequestBudget } from "../src/providers/requests.js";
+import { AgentFailure, RequestBudget } from "../src/providers/requests.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { bindGameReader } from "../src/profiles/registry.js";
 import { DemoGameReader } from "../src/profiles/demo.js";
+import { createStateObserver } from "../src/observation/state.js";
+import { withVision } from "../src/observation/combined.js";
 
 test("the local viewer exposes frames, controls, screenshots, and compatible checkpoints", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamer-jev-test-"));
@@ -112,10 +116,11 @@ test("manual play exposes local memory state and available actions without a dec
 
 test("the agent viewer exposes decisions, rejects manual input, and stops at its session limit", async () => {
   const emulator = new GameBoyEmulator(createDemoRom());
+  const records: unknown[] = [];
   const agent = new AgentSession(emulator, { ...createMockProviders(), mode: "mock",
     objectives: { goal: "Exercise the controller", constraints: [], milestones: [] },
     budget: new RequestBudget({ maxRequests: 10, timeoutMs: 1000, intervalMs: 0, retries: 0 }),
-    actionFrames: 4, maxDecisions: 2, maxSeconds: 60,
+    actionFrames: 4, maxDecisions: 2, maxSeconds: 60, record: (event) => records.push(event),
   });
   const viewer = await startViewer(emulator, { port: 0, speed: 1, paused: true, checkpointPath: "unused-checkpoint.json", agent });
   const post = (path: string, body: unknown = {}) => fetch(`${viewer.url}${path}`, {
@@ -131,7 +136,9 @@ test("the agent viewer exposes decisions, rejects manual input, and stops at its
     await new Promise<void>((resolve) => {
       const timer = setInterval(() => { if (agent.terminal) { clearInterval(timer); resolve(); } }, 10);
     });
-    assert.equal(emulator.frameNumber, 16); assert.equal(agent.snapshot.decisions, 2);
+    const actions = records.filter((event) => (event as { type: string }).type === "action") as { fromFrame: number; toFrame: number }[];
+    assert.equal(actions.length, 2); assert.ok(actions.every((action) => action.toFrame - action.fromFrame === 8));
+    assert.equal(emulator.frameNumber, actions.at(-1)!.toFrame); assert.equal(agent.snapshot.decisions, 2);
     const stopped = await (await fetch(`${viewer.url}/api/status`)).json();
     assert.equal(stopped.audioPaused, true); assert.match(stopped.agent.stopReason, /Decision limit/);
     const exchange = await (await fetch(`${viewer.url}/api/jev-exchange`)).json();
@@ -140,5 +147,72 @@ test("the agent viewer exposes decisions, rejects manual input, and stops at its
     assert.equal(exchange.exchange.response.actionId, stopped.agent.action);
     assert.equal(exchange.revision, stopped.agent.exchange.revision);
     assert.equal((await post("/api/resume")).status, 400);
+  } finally { await viewer.close(); emulator.dispose(); }
+});
+
+test("the viewer keeps frames and PCM audio flowing across delayed vision and Jev responses, then pauses on failure", async () => {
+  const emulator = new GameBoyEmulator(createDemoRom());
+  let resolveVision!: (observation: VisualObservation) => void;
+  let resolveDecision!: (decision: Decision) => void;
+  let rejectDecision!: (error: Error) => void;
+  let visionCalls = 0, decisionCalls = 0;
+  const records: unknown[] = [];
+  const agent = new AgentSession(emulator, { mode: "mock", visionProvider: "mock",
+    objectives: { goal: "Keep playback running", constraints: [], milestones: [] },
+    budget: new RequestBudget({ maxRequests: 10, timeoutMs: 1000, intervalMs: 0, retries: 0 }),
+    actionFrames: 4, maxDecisions: null, maxSeconds: 60, record: (event) => records.push(event),
+    observer: withVision(createStateObserver(bindGameReader(new DemoGameReader(), emulator, 4)), { async observe() {
+      visionCalls++;
+      if (visionCalls === 1) return new Promise((resolve) => { resolveVision = resolve; });
+      return { text: "Checkerboard", model: "fixture-vision", usage: { inputTokens: 0, outputTokens: 0 } };
+    } }), decider: { decide() {
+      decisionCalls++;
+      return new Promise((resolve, reject) => { resolveDecision = resolve; rejectDecision = reject; });
+    } },
+  });
+  const viewer = await startViewer(emulator, { agent, port: 0, speed: 4, paused: true, checkpointPath: "unused.json" });
+  const status = async () => (await fetch(`${viewer.url}/api/status`)).json();
+  const waitUntil = async (predicate: () => boolean) => {
+    const deadline = performance.now() + 5000;
+    while (!predicate() && performance.now() < deadline) await delay(10);
+    assert.ok(predicate(), "Viewer did not reach the expected state.");
+  };
+  const flowingAudio = async (epoch: number) => {
+    const response = await fetch(`${viewer.url}/api/audio`);
+    assert.equal(response.headers.get("X-Audio-Paused"), "false");
+    assert.equal(Number(response.headers.get("X-Audio-Epoch")), epoch);
+    const samples = new Float32Array(await response.arrayBuffer());
+    assert.ok(samples.length > 0); assert.ok(samples.every(Number.isFinite));
+    assert.ok(samples.some((value) => value !== 0), "The synthetic ROM should provide audible PCM during model work.");
+  };
+  try {
+    const resumed = await fetch(`${viewer.url}/api/resume`, { method: "POST", headers: { "Content-Type": "application/json", Origin: viewer.url }, body: "{}" });
+    assert.equal(resumed.status, 200);
+    await waitUntil(() => visionCalls === 1 && emulator.frameNumber >= 24);
+    const observing = await status();
+    assert.equal(observing.agent.state, "observing"); assert.equal(observing.paused, false); assert.equal(observing.audioPaused, false);
+    assert.equal(decisionCalls, 0); await flowingAudio(observing.audioEpoch);
+    resolveVision({ text: "Checkerboard", model: "fixture-vision", usage: { inputTokens: 0, outputTokens: 0 } });
+    await waitUntil(() => decisionCalls === 1 && emulator.frameNumber >= observing.frame + 12);
+    const thinking = await status();
+    assert.equal(thinking.agent.state, "thinking"); assert.equal(thinking.paused, false); assert.equal(thinking.audioEpoch, observing.audioEpoch);
+    assert.equal(visionCalls, 1); await flowingAudio(observing.audioEpoch);
+    const firstFrame = agent.inspection.exchange!.frame;
+    assert.ok(firstFrame < thinking.frame, "Inspection must retain the request snapshot while the game advances.");
+    resolveDecision({ actionId: "wait", confidence: null, probabilities: {}, model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } });
+    await waitUntil(() => decisionCalls === 2 && emulator.frameNumber >= thinking.frame + 12);
+    const next = await status();
+    assert.equal(next.paused, false); assert.equal(next.audioEpoch, observing.audioEpoch); assert.equal(agent.snapshot.decisions, 1);
+    assert.equal(visionCalls, 2); await flowingAudio(observing.audioEpoch);
+    const action = records.find((event) => (event as { type: string }).type === "action") as { fromFrame: number; toFrame: number };
+    assert.equal(action.toFrame - action.fromFrame, 4); assert.ok(action.fromFrame > firstFrame);
+    rejectDecision(new AgentFailure("Fixture provider failed.")); await agent.waitForPending();
+    await waitUntil(() => agent.terminal);
+    for (let attempt = 0; attempt < 100 && !(await status()).paused; attempt++) await delay(10);
+    const stopped = await status();
+    assert.equal(stopped.paused, true); assert.equal(stopped.agent.state, "error"); assert.ok(stopped.audioEpoch > observing.audioEpoch);
+    const audio = await fetch(`${viewer.url}/api/audio`);
+    assert.equal(audio.headers.get("X-Audio-Paused"), "true"); assert.equal((await audio.arrayBuffer()).byteLength, 0);
+    await delay(40); assert.equal(emulator.frameNumber, stopped.frame); assert.equal(decisionCalls, 2);
   } finally { await viewer.close(); emulator.dispose(); }
 });

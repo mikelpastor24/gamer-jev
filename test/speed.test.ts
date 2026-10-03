@@ -21,7 +21,7 @@ test("viewer pacing delivers the requested high-speed frames and bounds catch-up
   const stalled = new FrameClock(100, 0);
   const batch = stalled.dueFrames(60_000, 32);
   assert.ok(batch > 3 && batch < 100, "A long stall must not advance thousands of frames in one callback.");
-  // Request wait time, pause, and speed edits are discarded rather than becoming gameplay.
+  // Explicit pauses and speed edits reset pacing without catch-up frames.
   stalled.reset(60_000);
   assert.equal(stalled.dueFrames(60_000, 32), 0);
   assert.equal(stalled.dueFrames(60_008, 32), 25);
@@ -85,10 +85,11 @@ test("changing speed during a Jev request leaves its context and signal intact a
   let begin: () => void = () => {};
   const started = new Promise<void>((resolve) => { begin = resolve; });
   let calls = 0;
+  const records: unknown[] = [];
   let requestSignal: AbortSignal | undefined;
   const budget = new RequestBudget({ maxRequests: 5, timeoutMs: 2000, intervalMs: 0, retries: 0 });
   const agent = new AgentSession(emulator, { mode: "mock", visionProvider: "none", objectives: { goal: "Wait for the model", constraints: [], milestones: [] },
-    observer: createMockProviders().observer, budget, actionFrames: 12, maxDecisions: 1, maxSeconds: 60,
+    observer: createMockProviders().observer, budget, actionFrames: 12, maxDecisions: 1, maxSeconds: 60, record: (event) => records.push(event),
     decider: { async decide(_context, signal) {
       calls++; requestSignal = signal;
       return budget.run("Jev", signal, async () => { begin(); return new Promise((resolve) => { complete = resolve; }); });
@@ -101,15 +102,18 @@ test("changing speed during a Jev request leaves its context and signal intact a
   try {
     await post("/api/resume"); await started;
     const before = agent.inspection;
+    const beforeFrame = emulator.frameNumber;
     const response = await post("/api/speed", { speed: 32 });
     assert.equal(response.status, 200); assert.equal((await response.json()).paused, false);
     await delay(30);
-    assert.equal(requestSignal!.aborted, false); assert.equal(emulator.frameNumber, 0);
+    assert.equal(requestSignal!.aborted, false); assert.ok(emulator.frameNumber > beforeFrame);
     assert.equal(calls, 1); assert.equal(budget.requests, 1); assert.deepEqual(agent.inspection, before);
     complete({ actionId: "wait", confidence: 1, probabilities: {}, model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } });
     await agent.waitForPending();
     for (let attempt = 0; attempt < 100 && !agent.terminal; attempt++) await delay(10);
-    assert.equal(agent.snapshot.decisions, 1); assert.equal(emulator.frameNumber, 12);
+    assert.equal(agent.snapshot.decisions, 1);
+    const action = records.find((event) => (event as { type: string }).type === "action") as { fromFrame: number; toFrame: number };
+    assert.equal(action.toFrame - action.fromFrame, 12); assert.equal(emulator.frameNumber, action.toFrame);
     assert.equal(calls, 1); assert.match(agent.snapshot.stopReason!, /Decision limit/);
   } finally { await viewer.close(); emulator.dispose(); }
 });

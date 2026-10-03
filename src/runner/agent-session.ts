@@ -69,7 +69,7 @@ export class AgentSession {
   }
 
   get terminal(): boolean { return this.state === "stopped" || this.state === "error"; }
-  get advancing(): boolean { return this.state === "acting" || this.state === "idle"; }
+  get advancing(): boolean { return !this.terminal && this.state !== "paused"; }
   get snapshot() {
     return { mode: this.options.mode, visionProvider: this.visionProvider, state: this.state, goal: this.settings.objectives.goal,
       observationMode: this.options.observer.kind ?? "custom", gameState: this.gameState ?? null,
@@ -158,7 +158,8 @@ export class AgentSession {
       requests: this.options.budget.requests, generation: this.generation });
   }
 
-  tick(frames: number): void {
+  /** Continuous viewer ticks consume neutral frames during model work; headless ticks stay deterministic. */
+  tick(frames: number, continuous = false): void {
     if (this.terminal || this.state === "paused") return;
     if (!Number.isSafeInteger(frames) || frames < 1 || frames > 600) throw new Error("Invalid agent tick frame count.");
     if (this.settings.maxSeconds !== null && Date.now() - this.startedAt >= this.settings.maxSeconds * 1000) { this.stop("Session time limit reached."); return; }
@@ -167,15 +168,18 @@ export class AgentSession {
       const held = Math.min(frames, active.remaining);
       if (held) { this.emulator.advance({ buttons: active.action.buttons, frames: held }); active.remaining -= held; frames -= held; }
       const released = Math.min(frames, active.release);
-      if (released) { this.emulator.advance({ buttons: [], frames: released }); active.release -= released; }
+      if (released) { this.emulator.advance({ buttons: [], frames: released }); active.release -= released; frames -= released; }
       if (!active.remaining && !active.release) {
         this.finishAction(false); this.active = undefined; this.state = "idle";
         const exhausted = this.exhaustedLimit();
         if (exhausted) this.stop(exhausted);
       }
+      if (!continuous || this.active || this.terminal) return;
+    }
+    if (this.pending) {
+      if (continuous && frames) this.emulator.advance({ buttons: [], frames });
       return;
     }
-    if (this.pending) return;
     const exhausted = this.exhaustedLimit();
     if (exhausted) { this.stop(exhausted); return; }
     const generation = this.generation;
@@ -188,6 +192,7 @@ export class AgentSession {
       this.stop(error instanceof AgentFailure ? error.message : "Agent failed. Check configuration and provider output.", true);
     }).finally(() => { if (this.pending === task) this.pending = undefined; });
     this.pending = task;
+    if (continuous && frames) this.emulator.advance({ buttons: [], frames });
   }
 
   async waitForPending(): Promise<void> { await this.pending; }
@@ -237,11 +242,29 @@ export class AgentSession {
     this.record({ type: "decision", context, observation, decision, screenHash: hash });
     this.diagnose("info", "decision-selected", { generation, sequence: this.decisions, decision,
       durationMs: Number((performance.now() - started).toFixed(3)) });
+    if (this.emulator.frameNumber !== frame.number && this.options.observer.availableActions) {
+      const current = this.options.observer.availableActions(this.emulator.captureFrame());
+      validateAgentActions(current, this.emulator.descriptor.buttons);
+      const available = current.find((candidate) => candidate.id === action.id);
+      if (!available || available.stop !== action.stop || available.frames !== action.frames ||
+          available.buttons.length !== action.buttons.length || !available.buttons.every((button) => action.buttons.includes(button))) {
+        const warning = `Action ${action.id} is no longer available at frame ${this.emulator.frameNumber}. Its response was discarded; a fresh decision is needed.`;
+        this.updateExchange({ warnings: [...this.exchange!.warnings, warning].slice(-8) });
+        this.completedExchange = this.exchange;
+        const data = { actionId: action.id, observedFrame: frame.number, currentFrame: this.emulator.frameNumber, reason: "Action availability changed." };
+        this.record({ type: "decision-discarded", ...data });
+        this.diagnose("info", "decision-discarded", data);
+        this.state = "idle";
+        const exhausted = this.exhaustedLimit();
+        if (exhausted) this.stop(exhausted);
+        return;
+      }
+    }
     if (action.stop) { this.stop("Jev requested stop. Objective completion is unverified."); return; }
-    this.active = { action, fromFrame: frame.number, remaining: action.frames, release: action.buttons.length ? 4 : 0 };
+    this.active = { action, fromFrame: this.emulator.frameNumber, remaining: action.frames, release: action.buttons.length ? 4 : 0 };
     this.state = "acting";
     this.diagnose("info", "action-started", { actionId: action.id, buttons: action.buttons,
-      frames: action.frames, releaseFrames: this.active.release });
+      frames: action.frames, releaseFrames: this.active.release, observedFrame: frame.number, executionFrame: this.active.fromFrame });
   }
 
   private finishAction(interrupted: boolean): void {

@@ -85,6 +85,8 @@ export interface DecisionContext {
 export interface ObservationProvider {
   readonly kind?: "state" | "vision" | "mock";
   observe(frame: Frame, previous: Frame | undefined, objectives: Objectives, signal: AbortSignal): Promise<Observation>;
+  /** Synchronous local action availability, without another model request or frame advancement. */
+  availableActions?(frame: Frame): readonly AgentAction[];
   reset?(): void;
   setActionFrames?(frames: number): void;
 }
