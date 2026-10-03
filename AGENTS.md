@@ -48,6 +48,13 @@ Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
 manual-session records. Redact credentials, exclude raw provider response bodies,
 deduplicate unchanged reader snapshots, and cap each recording at 32 MiB.
+Completed actions record bounded local before/after state differences at actual
+execution frames. Decision feedback tracks up to 32 recurring observations,
+unchanged actions, action cycles, and stable fields, including menu reopen loops.
+Treat that evidence as observed changes rather than verified goal progress or
+collision data. Keep recovery choices attributable to Jev. The Gen I reader
+identifies the complete START menu and excludes confirming its POKEMON entry
+when the party is empty; unrelated menus and other controls retain their actions.
 
 The viewer's Settings → Agent editor changes objectives and session ceilings
 without restarting. Updates pause the agent, cancel pending work, preserve

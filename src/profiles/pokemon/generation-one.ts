@@ -48,6 +48,10 @@ function status(value: number, hp: number): string {
   return effects.join(",") || "healthy";
 }
 
+function menuLabel(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/^>\s*/, "").trim().toUpperCase();
+}
+
 /** Shared Gen I decoding; no pathfinding, scripted gameplay, or model calls. */
 export class GenerationOnePokemonReader implements GameReader {
   readonly descriptor: GameReaderDescriptor;
@@ -124,6 +128,13 @@ export class GenerationOnePokemonReader implements GameReader {
     }).join("; ").slice(0, 256) || "empty", "Bag item IDs and quantities in slot order; IDs are not item names. Clipped to 256 characters.");
     const partyCount = byte(layout.partyCount);
     add("partyCount", partyCount <= 6 ? partyCount : "unknown", "Current party size, at most six. Unused slots are not interpreted.");
+    const menuRows = `${screen.top}\n${screen.bottom}`.split("\n").map(menuLabel);
+    if (!inBattle && phase === "menu" && ["POKEMON", "ITEM", "SAVE", "OPTION", "EXIT"].every((label) => menuRows.includes(label))) {
+      add("menuKind", "overworld", "The START menu for party, items, saving, and options. Opening or closing it does not move the player or obtain a starter.");
+      const selected = menuLabel(screen.cursor!.row);
+      add("menuSelection", selected, "Highlighted START-menu entry. POKEMON cannot open the party screen when partyCount is zero.");
+      if (selected === "POKEMON" && partyCount === 0) add("menuSelectionEffect", "The party is empty. Confirming POKEMON has no effect; select another entry or close the menu to explore.", "No party exists to show. This menu does not give the player a Pokemon.");
+    }
     if (partyCount <= 6) for (let slot = 0; slot < partyCount; slot++) {
       const mon = bytes(layout.partyMons + slot * 44, 44);
       add(`party${slot + 1}`, this.describeMon(mon, bytes(layout.partyNicks + slot * 11, 11), false), "Nickname, internal species ID (not Pokédex number), level, HP, types, and status. Party HP can lag behind active battle HP.");
@@ -140,7 +151,9 @@ export class GenerationOnePokemonReader implements GameReader {
   }
 
   availableActions(state: GameState, actions: readonly AgentAction[]): readonly AgentAction[] {
-    return actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1)
+    const emptyPartySelection = state.values.menuKind === "overworld" && state.values.menuSelection === "POKEMON" && state.values.partyCount === 0;
+    return actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1 &&
+      !(emptyPartySelection && action.buttons[0] === "A"))
       .map((action) => {
         if (action.stop || action.id === "wait") return action;
         const button = action.buttons[0]!;
@@ -149,7 +162,9 @@ export class GenerationOnePokemonReader implements GameReader {
         const descriptions: Record<string, string> = {
           A: menu ? "Confirm the highlighted menu choice or naming-grid character." : text ? "Advance or acknowledge text when the game accepts input." : "Interact or confirm; in battle, confirm the current choice.",
           B: state.values.phase === "naming" ? "Delete the last naming character." : "Cancel or go back where permitted; some prompts require A.",
-          START: state.values.phase === "naming" ? "Finish naming once at least one character is entered." : state.values.gameStarted ? "Open or close the overworld menu where permitted." : "Leave the title screen or confirm supported menus.",
+          START: state.values.phase === "naming" ? "Finish naming once at least one character is entered." : state.values.menuKind === "overworld" ?
+            "Close the START menu and return to exploration. Repeatedly opening and closing it does not advance exploration." : state.values.gameStarted ?
+              "Open or close the overworld menu where permitted. This manages party, items, saving, and options; it does not move the player or obtain a starter." : "Leave the title screen or confirm supported menus.",
           SELECT: "Use SELECT only where the current menu supports it, such as naming or item ordering.",
         };
         const description = descriptions[button] ?? (menu || state.values.phase === "battle" ? `Move the menu cursor ${button.toLowerCase()} where supported.` : `Move or turn ${button.toLowerCase()} in the overworld; navigate choices during the intro.`);

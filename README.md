@@ -177,12 +177,21 @@ same decision contract and validate selected actions and probability distributio
 Native Node `fetch` avoids an additional SDK dependency; Apache-2.0 SDK code
 would be incompatible with the emulator's GPL-2.0-only license.
 
-The emulator freezes while models respond, keeping each decision tied to the
-observed screen. Generic actions hold one button or a direction with A/B for a bounded
+The viewer keeps emulation and sound running while models respond, with one
+request pipeline at a time. Decisions use a snapshot and local action availability
+is checked again before execution. Generic actions hold one button or a direction with A/B for a bounded
 duration, then release for four frames; readers can supply other valid button combinations.
-The `wait` action advances without input. Model
-latency creates gaps in gameplay and audio. This first loop is best suited to
-games that tolerate discrete control rather than fast reactions.
+The `wait` action advances without input; buttons are also released during model
+requests. Model latency delays the next controller input while the game continues.
+This loop is best suited to games that tolerate discrete control rather than fast reactions.
+
+Recent history includes `result` for completed actions: execution-end frame,
+screen/state change flags, and up to 12 changed fields with bounded before/after
+values. Jev also receives `feedback` over up to 32 observations: recurring states,
+consecutive unchanged states/actions, repeated action cycles, and fields that
+remained stable across recent observations. Opening and closing a menu does not
+erase visits to the same earlier state. These are observed changes, not verified
+progress or collision information; Jev still selects every controller action.
 
 To test the entire controller loop without keys, network access, or costs:
 
@@ -379,8 +388,9 @@ ROM bytes and absolute library paths are never returned to the browser.
 
 During agent sessions, **Jev exchange** pairs each decision's **Input** and
 **Response** by request number and emulator frame. The input sections show
-objectives, semantic game state, observations, available actions, recent history,
-the typed question, and the request JSON. Response sections show the selected
+objectives, semantic game state, observations, available actions, recent history
+with action results, **Repeated states** feedback, the typed question, and the
+request JSON. Response sections show the selected
 action, confidence, probabilities, model, token usage, validation warnings, and
 the normalized decision. **Response fields** shows the supported fields received
 from the provider, including rejected responses when available. Mock sessions

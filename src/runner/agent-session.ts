@@ -7,6 +7,7 @@ import { AgentFailure, RequestBudget } from "../providers/requests.js";
 import type { DiagnosticEvent, DiagnosticSink } from "../core/diagnostics.js";
 import { redactLogEvent } from "../core/redaction.js";
 import { parseAgentSettings } from "../config/agent-settings.js";
+import { actionResult, AgentFeedbackTracker } from "./feedback.js";
 export { controllerActions } from "../core/actions.js";
 
 export interface AgentSessionOptions {
@@ -30,8 +31,9 @@ export class AgentSession {
   private generation = 0;
   private controller: AbortController | undefined;
   private pending: Promise<void> | undefined;
-  private active: { action: AgentAction; fromFrame: number; remaining: number; release: number } | undefined;
+  private active: { action: AgentAction; fromFrame: number; remaining: number; release: number; screenHash: string; beforeState: GameState | undefined } | undefined;
   private history: ActionRecord[] = [];
+  private readonly feedback = new AgentFeedbackTracker();
   private previous: Frame | undefined;
   private screenHash: string | undefined;
   private unchangedScreens = 0;
@@ -140,6 +142,7 @@ export class AgentSession {
     this.pause();
     this.options.observer.reset?.();
     this.history = []; this.previous = undefined; this.screenHash = undefined;
+    this.feedback.reset();
     this.unchangedScreens = 0; this.observation = ""; this.decision = undefined; this.gameState = undefined;
     this.exchange = null; this.completedExchange = null; this.exchangeRevision++;
     this.record({ type: "timeline-reset", frame: this.emulator.frameNumber });
@@ -215,7 +218,8 @@ export class AgentSession {
     this.state = "thinking";
     const context = { objectives, console: this.emulator.descriptor.consoleId,
       frame: frame.number, observation: this.observation, unchangedScreens: this.unchangedScreens,
-      history: [...this.history], actions, ...(this.gameState ? { gameState: structuredClone(this.gameState) } : {}) };
+      history: [...this.history], feedback: this.feedback.observe(this.gameState, hash, this.history),
+      actions, ...(this.gameState ? { gameState: structuredClone(this.gameState) } : {}) };
     this.diagnose("debug", "decision-requested", { generation, sequence: this.decisions + 1, context,
       observationModel: observation.model, observationUsage: observation.usage, requests: this.options.budget.requests });
     const started = performance.now();
@@ -242,8 +246,13 @@ export class AgentSession {
     this.record({ type: "decision", context, observation, decision, screenHash: hash });
     this.diagnose("info", "decision-selected", { generation, sequence: this.decisions, decision,
       durationMs: Number((performance.now() - started).toFixed(3)) });
-    if (this.emulator.frameNumber !== frame.number && this.options.observer.availableActions) {
-      const current = this.options.observer.availableActions(this.emulator.captureFrame());
+    const executionFrame = this.emulator.captureFrame();
+    let beforeState = this.gameState;
+    if (executionFrame.number !== frame.number) {
+      const snapshot = this.options.observer.readSnapshot?.(executionFrame);
+      if (snapshot) validateGameState(snapshot.state, executionFrame.number);
+      beforeState = snapshot ? structuredClone(snapshot.state) : undefined;
+      const current = snapshot?.actions ?? this.options.observer.availableActions?.(executionFrame) ?? actions;
       validateAgentActions(current, this.emulator.descriptor.buttons);
       const available = current.find((candidate) => candidate.id === action.id);
       if (!available || available.stop !== action.stop || available.frames !== action.frames ||
@@ -261,7 +270,8 @@ export class AgentSession {
       }
     }
     if (action.stop) { this.stop("Jev requested stop. Objective completion is unverified."); return; }
-    this.active = { action, fromFrame: this.emulator.frameNumber, remaining: action.frames, release: action.buttons.length ? 4 : 0 };
+    this.active = { action, fromFrame: executionFrame.number, remaining: action.frames, release: action.buttons.length ? 4 : 0,
+      screenHash: createHash("sha256").update(executionFrame.pixels).digest("hex"), beforeState };
     this.state = "acting";
     this.diagnose("info", "action-started", { actionId: action.id, buttons: action.buttons,
       frames: action.frames, releaseFrames: this.active.release, observedFrame: frame.number, executionFrame: this.active.fromFrame });
@@ -269,8 +279,16 @@ export class AgentSession {
 
   private finishAction(interrupted: boolean): void {
     if (!this.active) return;
+    let result: ActionRecord["result"];
+    if (!interrupted) {
+      const frame = this.emulator.captureFrame();
+      const snapshot = this.options.observer.readSnapshot?.(frame);
+      if (snapshot) validateGameState(snapshot.state, frame.number);
+      result = actionResult(frame.number, this.active.screenHash !== createHash("sha256").update(frame.pixels).digest("hex"),
+        this.active.beforeState, snapshot?.state);
+    }
     const record: ActionRecord = { actionId: this.active.action.id, fromFrame: this.active.fromFrame,
-      toFrame: this.emulator.frameNumber, observation: this.observation.slice(0, 1500), interrupted };
+      toFrame: this.emulator.frameNumber, observation: this.observation.slice(0, 1500), interrupted, ...(result ? { result } : {}) };
     this.history.push(record);
     this.history = this.history.slice(-12);
     this.record({ type: "action", ...record });

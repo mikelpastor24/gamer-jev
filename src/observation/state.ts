@@ -17,7 +17,7 @@ export function createEmulatorStateProvider(emulator: Emulator, actionFrames: nu
 }
 
 export function createStateObserver(provider: GameStateProvider): ObservationProvider {
-  return { kind: "state", availableActions(frame) { return provider.read(frame).actions; },
+  return { kind: "state", readSnapshot(frame) { return provider.read(frame); }, availableActions(frame) { return provider.read(frame).actions; },
     reset() { provider.reset?.(); }, setActionFrames(frames) { provider.setActionFrames?.(frames); }, async observe(frame, _previous, _objectives, signal) {
     signal.throwIfAborted();
     const snapshot = provider.read(frame);

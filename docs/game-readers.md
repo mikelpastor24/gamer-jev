@@ -78,6 +78,15 @@ Keep goal-completion checks separate from the model's opinion that it should sto
    and reset/restore with synthetic or suitably licensed fixtures. Keep private
    ROMs and runtime game data out of the repository.
 
+State observers expose the reader's synchronous local snapshot to the runner.
+The runner uses it to recheck action availability and record state differences
+between execution start and completion, without calling vision again. Shared
+repetition feedback compares state values rather than frame numbers, detects
+returns to earlier states across menus, and includes bounded changed fields in
+action history. Custom observation providers can supply `readSnapshot` for this
+behavior; screen-only observers report pixel changes with unknown state changes.
+No game-specific recovery controls are selected by the runner.
+
 The registry automatically selects a unique compatible reader. Use
 `--profile <id>` when several readers match. `--list-profiles` lists registered
 readers. Adding one requires its strategy and registration, without changes

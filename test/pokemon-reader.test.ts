@@ -190,6 +190,36 @@ for (const variant of variants) {
     assert.equal(reader.availableActions(state(fixture), controllerActions(["A"], 3))[0]!.frames, 3);
   });
 
+  test(`${variant.name} identifies the START menu and excludes only empty-party confirmation`, () => {
+    const fixture = startedFixture(variant); const reader = variant.create();
+    const tiles = box(fixture, 0, 14);
+    for (const [index, label] of ["POKEMON", "ITEM", "SAVE", "OPTION", "EXIT"].entries()) tiles.set(textBytes(label), (index * 2 + 2) * 20 + 2);
+    tiles.fill(0x7f, 2 * 20 + 2, 2 * 20 + 10); tiles.set([0xe1, 0xe2], 2 * 20 + 2); // The actual POKe/MON character codes.
+    tiles[2 * 20 + 1] = 0xed;
+    const defaults = controllerActions(GAME_BOY_DESCRIPTOR.buttons, 24);
+    let snapshot = state(fixture);
+    assert.equal(snapshot.values.menuKind, "overworld"); assert.equal(snapshot.values.menuSelection, "POKEMON");
+    assert.match(String(snapshot.values.menuSelectionEffect), /party is empty/);
+    let actions = reader.availableActions(snapshot, defaults);
+    assert.ok(!actions.some((action) => action.id === "press_a"));
+    assert.ok(["press_b", "press_down", "press_start", "wait", "stop"].every((id) => actions.some((action) => action.id === id)));
+    fixture.ram[layout.partyCount] = 1;
+    snapshot = state(fixture);
+    assert.equal(snapshot.values.menuSelectionEffect, undefined);
+    assert.ok(reader.availableActions(snapshot, defaults).some((action) => action.id === "press_a"));
+    fixture.ram[layout.partyCount] = 0; tiles[2 * 20 + 1] = 0x7f; tiles[4 * 20 + 1] = 0xed;
+    snapshot = state(fixture); assert.equal(snapshot.values.menuSelection, "ITEM");
+    assert.ok(reader.availableActions(snapshot, defaults).some((action) => action.id === "press_a"));
+    tiles[4 * 20 + 1] = 0x7f; tiles[2 * 20 + 1] = 0xed;
+    tiles.fill(0x7f, 10 * 20 + 1, 10 * 20 + 19); // An incomplete/unrelated menu must not inherit the restriction.
+    snapshot = state(fixture); assert.equal(snapshot.values.menuKind, undefined);
+    assert.ok(reader.availableActions(snapshot, defaults).some((action) => action.id === "press_a"));
+    fixture.ram.fill(0, layout.tileMap, layout.tileMap + 360);
+    assert.ok(reader.availableActions(state(fixture), defaults).some((action) => action.id === "press_a"));
+    fixture.ram[layout.battleKind] = 1;
+    assert.ok(reader.availableActions(state(fixture), defaults).some((action) => action.id === "press_a"));
+  });
+
   test(`the default registry selects only the verified ${variant.name} revision and observes restore and reset`, () => {
     const fixture = startedFixture(variant); const registry = createDefaultGameReaderRegistry();
     const provider = registry.createFor(fixture, 24)!;

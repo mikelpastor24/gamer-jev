@@ -71,6 +71,25 @@ export interface ActionRecord {
   readonly toFrame: number;
   readonly observation: string;
   readonly interrupted: boolean;
+  readonly result?: ActionResult;
+}
+/** Changes observed at action completion are evidence, not proof of causation or goal progress. */
+export interface ActionResult {
+  readonly frame: number;
+  readonly screenChanged: boolean;
+  readonly stateChanged: boolean | null;
+  readonly changedFieldCount: number;
+  readonly changes: readonly { readonly field: string; readonly before: StateValue | null; readonly after: StateValue | null }[];
+}
+export interface DecisionFeedback {
+  readonly basis: "structured-state" | "screen";
+  readonly windowObservations: number;
+  readonly repeatedStateVisits: number;
+  readonly consecutiveUnchangedStates: number;
+  readonly consecutiveActionsWithoutChange: number;
+  readonly repeatedActionCycle: readonly string[];
+  readonly cycleRepetitions: number;
+  readonly stableFields: Readonly<Record<string, StateValue>>;
 }
 export interface DecisionContext {
   readonly objectives: Objectives;
@@ -80,6 +99,7 @@ export interface DecisionContext {
   readonly gameState?: GameState;
   readonly unchangedScreens: number;
   readonly history: readonly ActionRecord[];
+  readonly feedback?: DecisionFeedback;
   readonly actions: readonly AgentAction[];
 }
 export interface ObservationProvider {
@@ -87,6 +107,8 @@ export interface ObservationProvider {
   observe(frame: Frame, previous: Frame | undefined, objectives: Objectives, signal: AbortSignal): Promise<Observation>;
   /** Synchronous local action availability, without another model request or frame advancement. */
   availableActions?(frame: Frame): readonly AgentAction[];
+  /** Capture local state and actions synchronously, including when visual perception is remote. */
+  readSnapshot?(frame: Frame): StateSnapshot;
   reset?(): void;
   setActionFrames?(frames: number): void;
 }

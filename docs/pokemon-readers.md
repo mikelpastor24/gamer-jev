@@ -65,6 +65,7 @@ records follow the workflows in the [README](../README.md).
 | `phase`, `gameStarted` | Boot/intro, transition, boxed text, menu, naming, overworld, or battle evidence |
 | `screenTextTop`, `screenTextBottom` | English text decoded from complete boxes in the 20 by 18 work-RAM tile map |
 | `menuCursorX`, `menuCursorY`, `menuCursorRow` | Visible boxed cursor position and its row; not a claim that the game is polling input |
+| `menuKind`, `menuSelection`, `menuSelectionEffect` | Identified overworld START menu, highlighted entry, and the empty-party confirmation restriction when applicable |
 | `namingPrompt`, `enteredName` | Player/rival naming heading and current entry when the naming alphabet grid is visible |
 | `playerName`, `rivalName` | Terminated, decoded names after gameplay starts |
 | `mapId`, `playerX`, `playerY`, `mapWidth`, `mapHeight`, `facing`, `movementMode` | Location and movement state; map dimensions use movement squares |
@@ -91,6 +92,16 @@ party screens, and other unboxed labels are not fully represented.
 Party and battle structures are different. During a fight, `battlePlayer`
 contains current HP and `battlePlayerMoves` contains current PP; the party copy
 can lag until the fight ends. Internal species IDs are **not Pokédex numbers**.
+
+When the complete START menu is visible and POKEMON is selected with an empty
+party, the reader excludes A: that selection cannot open the party screen.
+Other entries, unrelated menus, intro choices, naming, and battle controls keep
+their normal actions. The reader exposes this restriction as memory-derived
+state, and describes START as menu access rather than obtaining a starter.
+Jev also receives the shared runtime's action results and recurring-state
+feedback. Those observations can reveal a menu loop or an input that left
+coordinates unchanged; they do not establish a collision map or verified progress.
+
 Item and move IDs are not translated using a bundled game-data table. Names
 visible in boxed menus remain available as text; a nickname need not identify
 its species.

@@ -210,7 +210,7 @@ export function createInspector(onControllerVisibility) {
   function renderObservation() {
     exchange = selectedExchange(exchangeSnapshot);
     const sections = exchangeTab === "input" ? [["summary", "Summary"], ["objectives", "Objectives"], ["state", "Game state"],
-      ["observation", "Observation"], ["actions", "Actions"], ["history", "History"], ["question", "Question"], ["json", "Request JSON"]] :
+      ["observation", "Observation"], ["actions", "Actions"], ["history", "History"], ["feedback", "Repeated states"], ["question", "Question"], ["json", "Request JSON"]] :
       [["summary", "Summary"], ["probabilities", "Probabilities"], ["json", "Response fields"], ["decision", "Decision JSON"]];
     const select = query("#exchange-section");
     if (select.dataset.tab !== exchangeTab) {
@@ -251,6 +251,7 @@ export function createInspector(onControllerVisibility) {
       if (section === "objectives") return json(state.objectives, "No objectives were supplied.");
       if (section === "actions") return json(state.actions, "No actions were supplied.");
       if (section === "history") return json(state.history, "No recent action history.");
+      if (section === "feedback") return json(state.feedback, "No repetition feedback available.");
       return [`Objective\n${state.objectives?.goal ?? "Unavailable"}`, `Constraints\n${state.objectives?.constraints?.join("\n") || "None"}`,
         `Milestones\n${state.objectives?.milestones?.join("\n") || "None"}`,
         `Reader: ${state.gameState?.source ?? "None"}\nState fields: ${Object.keys(state.gameState?.values ?? {}).length}\nAvailable actions: ${state.actions?.length ?? 0}\nRecent actions: ${state.history?.length ?? 0}\nUnchanged screens: ${state.unchangedScreens ?? 0}`,
