@@ -163,6 +163,10 @@ working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
 [JSON profile](examples/demo-profile.json) without implementing another class.
 See [Pokémon readers](docs/pokemon-readers.md) for the supported hashes,
 decoded fields, limits, and extending the shared Gen I reader to other revisions.
+Pokémon readers also supply profile-owned decision facts: live walking collision,
+objects/signs, exits, and local route distances with the first available inputs.
+Jev chooses the destination and each action. Surfing and special field mechanics
+remain partial; decoded routes do not prove quest progress or full-game competence.
 
 Open **Game state** in manual or agent mode to inspect live fields,
 descriptions, and available actions. `GET /api/game-state` exposes the same
@@ -390,7 +394,8 @@ During agent sessions, **Jev exchange** pairs each decision's **Input** and
 **Response** by request number and emulator frame. The input sections show
 objectives, semantic game state, observations, available actions, recent history
 with action results, **Repeated states** feedback, the typed question, and the
-request JSON. Response sections show the selected
+request JSON. **Game facts & routes** shows optional profile-owned facts and
+evidence about each currently offered action. Response sections show the selected
 action, confidence, probabilities, model, token usage, validation warnings, and
 the normalized decision. **Response fields** shows the supported fields received
 from the provider, including rejected responses when available. Mock sessions
@@ -562,7 +567,9 @@ registration, JSON schema, validation, and examples.
   and Yellow revisions. Startup, naming, the starting room, and overworld menus
   were checked locally for all three; party/battle decoding is tested with
   synthetic RAM. Full-game play, other Pokémon revisions and generations,
-  collision maps, and verified progress checks remain future work.
+  global routing, full field/battle-command legality, and verified progress checks
+  remain future work. Local walking collisions and exit routes were checked from
+  both house floors into Pallet Town; no real-model success is claimed.
   The demo's new readiness flag changes its hash; older demo checkpoints must
   be replaced. Reader compatibility is checked against exact ROM hashes.
 

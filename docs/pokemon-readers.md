@@ -69,6 +69,7 @@ records follow the workflows in the [README](../README.md).
 | `namingPrompt`, `enteredName` | Player/rival naming heading and current entry when the naming alphabet grid is visible |
 | `playerName`, `rivalName` | Terminated, decoded names after gameplay starts |
 | `mapId`, `playerX`, `playerY`, `mapWidth`, `mapHeight`, `facing`, `movementMode` | Location and movement state; map dimensions use movement squares |
+| `locationName`, `navigationStatus`, `movementInProgress`, `stepUP/DOWN/LEFT/RIGHT` | Known location names, live movement timing, and walking/turning/blocked/unknown evidence |
 | `money`, `badgeCount`, `badges`, `pokedexOwned`, `pokedexSeen` | Packed-BCD money, badge flags, and 151-species bit counts |
 | `bagCount`, `bagItems` | Occupied bag slots and internal item ID/quantity pairs |
 | `partyCount`, `party1` through `party6`, corresponding `Moves` fields | Nicknames, internal species IDs, levels, big-endian HP, types, status, and move IDs/PP |
@@ -95,12 +96,54 @@ can lag until the fight ends. Internal species IDs are **not Pokédex numbers**.
 
 When the complete START menu is visible and POKEMON is selected with an empty
 party, the reader excludes A: that selection cannot open the party screen.
-Other entries, unrelated menus, intro choices, naming, and battle controls keep
-their normal actions. The reader exposes this restriction as memory-derived
+Other entries and unrelated menus retain their confirmation controls. The reader exposes this restriction as memory-derived
 state, and describes START as menu access rather than obtaining a starter.
 Jev also receives the shared runtime's action results and recurring-state
 feedback. Those observations can reveal a menu loop or an input that left
 coordinates unchanged; they do not establish a collision map or verified progress.
+
+### Profile-owned decision support
+
+[`GenerationOneDecisionSupport`](../src/profiles/pokemon/decision-support.ts) is
+an adjacent class used by the reader. It enriches decoded state with bounded
+`decisionSupport.facts` and `actionFacts` for the current choices. Jev and optional
+vision use the same profile output; no extra provider or key is required.
+
+During walking or cycling, it reads live padded map blocks, tileset pointers,
+warp destinations, connected-map strips, signs, sprite positions, and hidden
+object flags. It decodes block tiles, passable tiles, tile-pair collisions, and
+one-way ledges from the user's loaded ROM. Red/Blue collision lists are in the
+fixed ROM bank; Yellow uses bank 1, independently of the graphics/block bank.
+All addresses are revision-specific in
+[`navigation-layout.ts`](../src/profiles/pokemon/navigation-layout.ts).
+Only immutable ROM slices are cached, up to four banks; reset and restore clear
+them. Live objects, routes, and action availability are recalculated every read.
+
+The reader distinguishes a passable step from facing an obstacle without moving.
+After facing a confirmed obstacle, that walking input is excluded. A remains
+available for interacting with decoded objects, signs, counters, and scenery.
+Standing on a warp retains directional attempts because some exits trigger on
+a collision or an additional input. A live walking counter offers only wait/stop
+until the current movement completes. B/SELECT are excluded during exploration;
+the complete START menu offers vertical navigation, confirmation, and closing.
+Text boxes offer A/B, waits, and stopping. Naming and unrelated menus retain
+their applicable attempts.
+
+A bounded breadth-first search supplies distances and all equally short first
+controller inputs to exits and interaction positions. Other warp squares are
+terminal to avoid claiming a path can walk through an exit without changing maps.
+This is local wayfinding: Jev chooses the destination and every controller input.
+There is no automatic walking, objective selection, retry substitution, or
+checkpoint recovery. View this evidence in **Jev exchange → Input → Game facts &
+routes**, or in the complete Game state/API snapshot. Action descriptions also
+include concise facts.
+
+These are decoded mechanical facts, not universal legal-command guarantees.
+Unknown or uninitialized collision data preserves directional attempts. Surfing
+and unknown movement modes retain controls without asserting walking routes;
+active Strength retains attempted boulder pushes. Scripts, locks, forced movement,
+and other field mechanics may still reject a route. Object identities are not
+invented from sprite appearance, and route distances do not prove quest progress.
 
 Item and move IDs are not translated using a bundled game-data table. Names
 visible in boxed menus remain available as text; a nickname need not identify
@@ -110,9 +153,10 @@ Actions retain stable controller IDs such as `press_a` and `press_down`, with
 context descriptions. Button presses use at most eight frames, or a shorter
 `--action-frames` setting, followed by four release frames. Waits retain the
 configured duration. Simultaneous button combinations are excluded. LCD-off
-and blocked overworld transitions offer only `wait` and `stop`. Other phases
-offer single-button attempts: a control can do nothing if the current screen
-ignores it. The reader does not claim to enumerate every legal in-game command
+and blocked overworld transitions offer only `wait` and `stop`. Stable overworld
+and known menu/text phases use the additional availability rules above. Unknown
+menus and battles retain single-button attempts: a control can do nothing if the
+current screen ignores it. The reader does not claim to enumerate every legal in-game command
 or exclude every ineffective input. Jev selects all gameplay inputs; the reader
 never chooses moves, walks a route, or executes a walkthrough.
 
@@ -134,6 +178,8 @@ GameReader contract
 [`generation-one.ts`](../src/profiles/pokemon/generation-one.ts) owns Gen I
 decoding and action descriptions. [`encoding.ts`](../src/profiles/pokemon/encoding.ts)
 owns English character codes, BCD, bit counts, and boxed text.
+`decision-support.ts` owns profile-specific facts and local navigation;
+`navigation-layout.ts` supplies verified RAM and ROM addresses for its mechanics.
 [`red.ts`](../src/profiles/pokemon/red.ts),
 [`blue.ts`](../src/profiles/pokemon/blue.ts), and
 [`yellow.ts`](../src/profiles/pokemon/yellow.ts) supply each exact revision.
@@ -143,7 +189,8 @@ offset to all Red addresses: Yellow's tile-map and sprite fields retain their
 addresses while many later fields move. These modules stay under `src/profiles/`;
 the core, Jev adapters, vision adapters, and runner contain no Pokémon knowledge.
 Reads take a fresh
-bounded RAM snapshot without writes, frame advancement, or caches.
+bounded RAM snapshot without writes, frame advancement, or RAM caches.
+Navigation additionally caches bounded immutable ROM slices, never live RAM.
 
 To add a compatible Gen I release:
 
@@ -176,6 +223,10 @@ English disassemblies:
 - [Character encoding](https://github.com/pret/pokered/blob/master/constants/charmap.asm)
 - [Party structures and PP masks](https://github.com/pret/pokered/blob/master/constants/pokemon_data_constants.asm)
 - [Runtime flags](https://github.com/pret/pokered/blob/master/constants/ram_constants.asm)
+- [Red/Blue walking, tile pairs, and warp triggers](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/home/overworld.asm)
+- [Yellow walking and collision-bank differences](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/home/overworld.asm)
+- [Directional ledge rules](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/overworld/ledges.asm)
+- [Reference project's state, legal options, and facts architecture](https://github.com/christianmat/jev-pokemon/tree/20cdcb846ff995383fe3da1d48ad5eac6d8d1abd)
 
 The reader is an original implementation using documented layout facts; no
 disassembly code or commercial assets are copied. Automated tests use invented
@@ -183,11 +234,15 @@ RAM and blank frames for each release, including party/battle decoding, startup
 guards, bounded actions, cross-version rejection, restore/reset, and memory-only
 sessions. Local checks with the matching ROMs exercised startup, intro, naming,
 the starting room, overworld menus, restore/reset, and memory-only decision
-execution. Party/battle decoding is covered by synthetic fixtures; full-game
+execution. Additional isolated local checks matched blocked and passable directions
+and followed decoded exit routes from both house floors into Pallet Town in all
+three revisions. These mechanical checks used local controller inputs without
+model calls and preserved the user's checkpoints. Party/battle decoding is covered by synthetic fixtures; full-game
 play and live Jev performance have not been verified. Yellow-specific follower
 behavior and Pikachu's happiness are not decoded by the shared reader.
 
-These readers supply observations, not a complete Pokémon agent. They have
-no collision map, NPC or exit model, pathfinding, event-flag objectives, or
-verified completion checks. Vision can supplement missing visible evidence.
+These readers supply observations and local wayfinding, not a complete Pokémon
+agent. Global world routing, story/event objectives, battle-command legality,
+complete field mechanics, and verified completion checks remain future work.
+Vision can supplement missing visible evidence.
 Loading the ROM and decoding state do not establish that Jev will finish it.

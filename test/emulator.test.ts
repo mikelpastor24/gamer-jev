@@ -57,6 +57,13 @@ test("frame and memory observations cannot mutate emulator state", () => {
     assert.notEqual(emulator.readMemory(0xc000, 1)[0], 123);
     assert.throws(() => emulator.readMemory(0xffff, 2));
     assert.throws(() => emulator.readMemory(-1, 1));
+    const cartridge = emulator.readRom(0x134, 16);
+    const titleByte = cartridge[0]; cartridge[0] = titleByte! ^ 0xff;
+    assert.equal(emulator.readRom(0x134, 1)[0], titleByte);
+    for (const [offset, length] of [[-1, 1], [0, 0], [0, 0x4001], [0x8000, 1], [0.5, 1]]) {
+      assert.throws(() => emulator.readRom(offset!, length!));
+    }
+    assert.equal(emulator.frameNumber, 5);
   } finally { emulator.dispose(); }
 });
 

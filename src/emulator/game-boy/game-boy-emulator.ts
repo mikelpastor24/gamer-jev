@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AudioChunk, AudioSource, Emulator, EmulatorAction, EmulatorDescriptor, EmulatorState, Frame, MemoryReader, RomInfo } from "../../core/emulator.js";
+import type { AudioChunk, AudioSource, Emulator, EmulatorAction, EmulatorDescriptor, EmulatorState, Frame, MemoryReader, RomInfo, RomReader } from "../../core/emulator.js";
 import { validateAction } from "../../core/emulator.js";
 import { GAME_BOY_FPS, ServerboyBridge, validateSnapshot } from "./serverboy.js";
 
@@ -16,7 +16,7 @@ export const GAME_BOY_DESCRIPTOR: EmulatorDescriptor = Object.freeze({
 
 const ROM_BANKS = new Map([[0, 2], [1, 4], [2, 8], [3, 16], [4, 32], [5, 64], [6, 128], [7, 256], [8, 512], [0x52, 72], [0x53, 80], [0x54, 96]]);
 
-export class GameBoyEmulator implements Emulator, MemoryReader, AudioSource {
+export class GameBoyEmulator implements Emulator, MemoryReader, RomReader, AudioSource {
   readonly descriptor = GAME_BOY_DESCRIPTOR;
   readonly rom: RomInfo;
   private readonly romBytes: Buffer;
@@ -72,6 +72,15 @@ export class GameBoyEmulator implements Emulator, MemoryReader, AudioSource {
       throw new Error("Memory reads must stay within the 64 KiB Game Boy address space.");
     }
     return this.bridge.readMemory(address, length);
+  }
+
+  readRom(offset: number, length: number): Uint8Array {
+    this.assertActive();
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 1 ||
+        length > 0x4000 || offset + length > this.romBytes.length) {
+      throw new Error("Cartridge reads must stay within the loaded ROM and at most 16 KiB.");
+    }
+    return Uint8Array.from(this.romBytes.subarray(offset, offset + length));
   }
 
   saveState(): EmulatorState {

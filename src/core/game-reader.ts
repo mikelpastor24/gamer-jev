@@ -1,5 +1,5 @@
-import type { AgentAction, GameState, StateValue } from "./agent.js";
-import type { MemoryReader } from "./emulator.js";
+import type { AgentAction, GameState, GameDecisionSupport, StateValue } from "./agent.js";
+import type { MemoryReader, RomReader } from "./emulator.js";
 
 export interface GameReaderDescriptor {
   readonly id: string;
@@ -12,12 +12,15 @@ export interface GameReaderDescriptor {
 export interface GameStateData {
   readonly values: Readonly<Record<string, StateValue>>;
   readonly descriptions: Readonly<Record<string, string>>;
+  readonly decisionSupport?: GameDecisionSupport;
 }
+
+export type GameReaderMemory = MemoryReader & Partial<RomReader>;
 
 /** Strategy for one game or compatible ROM family. No provider or emulator-core access. */
 export interface GameReader {
   readonly descriptor: GameReaderDescriptor;
-  readState(memory: MemoryReader): GameStateData;
+  readState(memory: GameReaderMemory): GameStateData;
   availableActions(state: GameState, controllerActions: readonly AgentAction[]): readonly AgentAction[];
   /** Invalidate optional caches after cartridge reset or checkpoint restore. */
   reset?(): void;

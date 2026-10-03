@@ -15,6 +15,7 @@ import { createStateObserver } from "../src/observation/state.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { RequestBudget } from "../src/providers/requests.js";
+import { RED_BLUE_NAVIGATION, YELLOW_NAVIGATION } from "../src/profiles/pokemon/navigation-layout.js";
 
 const variants = [
   { name: "Red", descriptor: POKEMON_RED_DESCRIPTOR, layout: POKEMON_RED_LAYOUT, create: createPokemonRedReader },
@@ -77,6 +78,148 @@ function mon(fixture: PokemonMemoryFixture, address: number, battle = false) {
   fixture.ram.set([1, 144], address + (battle ? 15 : 34)); // Maximum HP 400.
   fixture.ram.set([0xc5, 20, 0, 0], address + (battle ? 25 : 29));
 }
+
+/** Invented cartridge tables and block squares, independent of any commercial map. */
+function navigationFixture(variant = variants[0]!) {
+  const fixture = startedFixture(variant);
+  const navigation = variant.name === "Yellow" ? YELLOW_NAVIGATION : RED_BLUE_NAVIGATION;
+  const rom = new Uint8Array(7 * 0x4000);
+  const reads: number[] = [];
+  const memory = Object.assign(fixture, { readRom(offset: number, length: number) {
+    assert.ok(offset >= 0 && offset + length <= rom.length && length <= 0x4000);
+    reads.push(offset); return rom.slice(offset, offset + length);
+  } });
+  const word = (address: number, value: number) => fixture.ram.set([value & 0xff, value >> 8], address);
+  fixture.ram[variant.layout.mapId] = 38;
+  fixture.ram[variant.layout.facing] = 4;
+  fixture.ram[variant.layout.mapWidth] = 4; fixture.ram[variant.layout.mapHeight] = 4;
+  fixture.ram[navigation.bank] = 2; fixture.ram[navigation.tileset] = 1;
+  const collisionAddress = variant.name === "Yellow" ? 0x7000 : 0x3000;
+  word(navigation.blocks, 0x5000); word(navigation.collision, collisionAddress);
+  rom.set([0, 0xff], collisionAddress); rom[navigation.tilePairs] = 0xff; rom[navigation.ledges] = 0xff;
+  fixture.ram.fill(0xff, navigation.counters, navigation.counters + 4);
+  fixture.ram[navigation.hiddenList] = 0xff;
+  fixture.ram[navigation.warpCount] = 1; fixture.ram.set([1, 7, 1, 37], navigation.warps);
+  fixture.ram.fill(255, 0xc6e8, 0xc6e8 + 1300);
+  const blockBase = 0x9000; // Blocks in bank 2; Yellow collisions deliberately use bank 1.
+  rom.fill(1, blockBase + 255 * 16, blockBase + 256 * 16); // Solid padded border.
+  for (let by = 0; by < 4; by++) for (let bx = 0; bx < 4; bx++) fixture.ram[0xc6e8 + (by + 3) * 10 + bx + 3] = by * 4 + bx;
+  const setTile = (x: number, y: number, tile: number) => {
+    const block = Math.floor(y / 2) * 4 + Math.floor(x / 2);
+    rom[blockBase + block * 16 + ((y & 1) * 2 + 1) * 4 + (x & 1) * 2] = tile;
+  };
+  setTile(3, 5, 1);
+  return { fixture: memory, navigation, rom, reads, setTile };
+}
+
+for (const variant of variants) {
+  test(`${variant.name} derives collision, exits, and shortest first inputs from live memory and read-only cartridge tables`, () => {
+    const { fixture, reads } = navigationFixture(variant);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    const before = fixture.saveState();
+    const snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepUP, "blocked");
+    assert.equal(snapshot.state.values.stepRIGHT, "walkable");
+    assert.equal(snapshot.state.values.locationName, "Player's house, upper floor");
+    assert.ok(!snapshot.actions.some(action => action.id === "press_up" || action.id === "press_b" || action.id === "press_select"));
+    assert.ok(snapshot.actions.some(action => action.id === "press_start"));
+    assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /Exit 1.*\(7,1\).*9 local step.*press_right/);
+    assert.match(snapshot.actions.find(action => action.id === "press_right")!.description, /shortest route 9 step/);
+    assert.equal(snapshot.state.decisionSupport!.actionFacts.press_up, undefined);
+    assert.ok(Object.keys(snapshot.state.decisionSupport!.actionFacts).every(id => snapshot.actions.some(action => action.id === id)));
+    assert.deepEqual(fixture.saveState(), before); assert.equal(fixture.inputs.length, 0);
+    const count = reads.length; assert.ok(count > 0 && count <= 4);
+    provider.read(fixture.captureFrame()); assert.equal(reads.length, count);
+    provider.reset!(); provider.read(fixture.captureFrame()); assert.ok(reads.length > count);
+  });
+
+  test(`${variant.name} refreshes object occupancy and distinguishes facing, interaction, and hidden objects`, () => {
+    const { fixture, navigation, setTile } = navigationFixture(variant);
+    setTile(3, 5, 0);
+    fixture.ram[navigation.spriteCount] = 1; fixture.ram[0xc110] = 1;
+    fixture.ram.set([9, 7], 0xc214); // Object at (3,5), with the engine's four-square padding.
+    fixture.ram[variant.layout.facing] = 8;
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepUP, "turn_only");
+    assert.match(snapshot.actions.find(action => action.id === "press_up")!.description, /only turn/);
+    fixture.ram[variant.layout.facing] = 4;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepUP, "blocked");
+    assert.ok(!snapshot.actions.some(action => action.id === "press_up"));
+    assert.match(snapshot.state.decisionSupport!.actionFacts.press_a!.join("\n"), /Facing Object 1/);
+    fixture.ram.set([1, 9, 0xff], navigation.hiddenList); fixture.ram[navigation.hiddenFlags + 1] = 2;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepUP, "walkable");
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Object 1/);
+  });
+
+  test(`${variant.name} waits through real movement and retains unknown surfing and Strength inputs`, () => {
+    const { fixture, navigation, setTile } = navigationFixture(variant);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    fixture.ram[navigation.walkCounter] = 6;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.movementInProgress, true);
+    assert.deepEqual(snapshot.actions.map(action => action.id), ["wait", "stop"]);
+    fixture.ram[navigation.walkCounter] = 0; fixture.ram[variant.layout.movementMode] = 2;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.navigationStatus, "partial");
+    assert.ok(snapshot.actions.some(action => action.id === "press_up"));
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Shortest first inputs/);
+    fixture.ram[variant.layout.movementMode] = 0; fixture.ram[variant.layout.facing] = 4;
+    setTile(3, 5, 0); fixture.ram[navigation.spriteCount] = 1;
+    fixture.ram[0xc110] = 0x3f; fixture.ram.set([9, 7], 0xc214); fixture.ram[navigation.strengthFlags] = 1;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepUP, "unknown");
+    assert.ok(snapshot.actions.some(action => action.id === "press_up"));
+    assert.match(snapshot.state.decisionSupport!.actionFacts.press_up!.join("\n"), /Strength push/);
+  });
+}
+
+test("navigation respects tile pairs, one-way ledges, and warp triggers without claiming unknown routes", () => {
+  const { fixture, navigation, rom, setTile } = navigationFixture();
+  const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+  fixture.ram[navigation.tileset] = 0;
+  setTile(3, 6, 2); setTile(4, 6, 3); rom.set([0, 2, 3, 0xff], navigation.tilePairs);
+  rom.set([2, 3, 0, 0xff], 0x3000);
+  let snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepRIGHT, "turn_only");
+  assert.match(snapshot.state.decisionSupport!.actionFacts.press_right!.join("\n"), /tile-pair collision/);
+  // An invented one-way ledge permits a two-square downward landing, never the reverse crossing.
+  setTile(3, 7, 4); fixture.ram[POKEMON_RED_LAYOUT.mapY] = 5;
+  setTile(3, 5, 2); setTile(3, 6, 4); setTile(3, 7, 0);
+  rom.set([0, 2, 4, 0x80, 0xff], navigation.ledges); provider.reset!();
+  snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepDOWN, "walkable");
+  assert.match(snapshot.state.decisionSupport!.actionFacts.press_down!.join("\n"), /one-way ledge jump.*\(3,7\)/);
+  setTile(3, 7, 1); provider.reset!();
+  snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepDOWN, "turn_only");
+  assert.match(snapshot.state.decisionSupport!.actionFacts.press_down!.join("\n"), /ledge landing blocked/);
+  fixture.ram.set([5, 3, 1, 37], navigation.warps);
+  setTile(3, 4, 1); provider.reset!();
+  snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepUP, "unknown");
+  assert.ok(snapshot.actions.some(action => action.id === "press_up"));
+  assert.match(snapshot.state.decisionSupport!.actionFacts.press_up!.join("\n"), /Standing on an exit/);
+});
+
+test("connected edges use the live connection strip, and uninitialized collision tables retain unknown directions", () => {
+  const { fixture, navigation, rom } = navigationFixture();
+  const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+  fixture.ram[POKEMON_RED_LAYOUT.mapX] = 7; fixture.ram[POKEMON_RED_LAYOUT.mapY] = 3;
+  fixture.ram[navigation.connections] = 1; fixture.ram[navigation.connections + 1 + 3 * 11] = 0;
+  // An invented passable connected strip at x=8, y=3.
+  fixture.ram[0xc6e8 + (1 + 3) * 10 + 4 + 3] = 0;
+  let snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepRIGHT, "walkable");
+  assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /right boundary to Pallet Town/);
+  rom.fill(0, 0x3000, 0x3100); provider.reset!();
+  snapshot = provider.read(fixture.captureFrame());
+  assert.equal(snapshot.state.values.stepUP, undefined);
+  assert.ok(snapshot.actions.some(action => action.id === "press_up"));
+  assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /collision table is unavailable/);
+});
 
 test("English Gen I decoding handles terminators, endian-independent BCD, and bit padding", () => {
   assert.equal(decodeName(Uint8Array.of(0x80, 0xa1, 0xba, 0xf6, 0x50, 0x99)), "Abé0");

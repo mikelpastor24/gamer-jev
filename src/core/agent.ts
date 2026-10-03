@@ -37,11 +37,17 @@ export interface AgentAction {
 
 export interface ModelUsage { readonly inputTokens: number; readonly outputTokens: number }
 export type StateValue = string | number | boolean;
+/** Profile-owned evidence about the current choices; never executable instructions. */
+export interface GameDecisionSupport {
+  readonly facts: readonly string[];
+  readonly actionFacts: Readonly<Record<string, readonly string[]>>;
+}
 export interface GameState {
   readonly source: string;
   readonly frame: number;
   readonly values: Readonly<Record<string, StateValue>>;
   readonly descriptions: Readonly<Record<string, string>>;
+  readonly decisionSupport?: GameDecisionSupport;
 }
 export interface StateSnapshot {
   readonly state: GameState;

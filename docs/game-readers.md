@@ -6,8 +6,8 @@ uses the same observation and decision loop for every registered reader.
 
 ```mermaid
 flowchart LR
-  Emulator -->|read-only memory| Reader[GameReader strategy]
-  Reader -->|structured state and available actions| Observation
+  Emulator -->|read-only memory and optional cartridge data| Reader[GameReader strategy]
+  Reader -->|structured state, decision facts, and available actions| Observation
   Emulator -->|screenshot| Vision[Optional vision provider]
   Vision -->|visual evidence| Observation
   Observation --> Jev[Decision provider]
@@ -27,7 +27,7 @@ See [`GameReader`](../src/core/game-reader.ts) and the working
 ```ts
 interface GameReader {
   readonly descriptor: GameReaderDescriptor;
-  readState(memory: MemoryReader): GameStateData;
+  readState(memory: GameReaderMemory): GameStateData;
   availableActions(state: GameState, controllerActions: readonly AgentAction[]): readonly AgentAction[];
   reset?(): void;
 }
@@ -35,7 +35,8 @@ interface GameReader {
 
 - `descriptor` identifies the reader, console, name, and supported ROM SHA-256
   hashes. Register each supported revision only after verifying its layout.
-- `readState` receives only `readMemory(address, length)`. It returns named
+- `readState` receives `readMemory(address, length)` and optional read-only
+  `readRom(offset, length)`. It returns named
   string, number, or boolean values and English descriptions explaining them.
   It does not receive private emulator internals, write access, or API credentials.
 - `availableActions` derives valid choices from that state. It can filter the
@@ -54,6 +55,32 @@ and descriptions to 500. Action sets contain 1–255 unique IDs. Non-stop action
 advance 1–600 frames. Stop actions advance zero frames and press no buttons.
 Use `wait` while the game initializes or a transition has no actionable choices.
 Keep goal-completion checks separate from the model's opinion that it should stop.
+
+`GameStateData` can also include optional `decisionSupport`:
+
+```ts
+decisionSupport: {
+  facts: ["A door is visible at (7, 1)."],
+  actionFacts: { press_right: ["This direction starts a route to that door."] },
+}
+```
+
+This is profile-owned evidence, independent of the decision and vision providers.
+Use it for verified mechanics, legal choices, interaction targets, or route
+distances. A reader can delegate those calculations to an adjacent class under
+its own profile directory; the shared runner does not interpret game rules.
+Return at most 32 facts and 32 action IDs, with up to eight facts per ID and
+500 characters per fact. The binding keeps action facts only for the choices
+actually offered. Inputs are still bounded controller actions: supplying route
+facts does not choose a destination or execute a path.
+
+`GameReaderMemory` always supplies `readMemory`. Its optional `readRom` capability
+returns a copy of a slice of the loaded cartridge by absolute byte offset,
+independent of the CPU's current ROM bank. The Game Boy adapter bounds each
+slice to 16 KiB and validates the cartridge bounds. Use this to decode tables
+from the user's own ROM rather than bundle extracted assets. No ROM bytes belong
+in observations, logs, or browser-facing data. Memory-only adapters remain valid;
+mark unsupported mechanics as unknown instead of inventing legality.
 
 ## Add a TypeScript reader
 

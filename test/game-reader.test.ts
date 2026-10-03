@@ -18,10 +18,43 @@ import { RequestBudget } from "../src/providers/requests.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { parseCliOptions } from "../src/config/cli-options.js";
+import { validateGameState } from "../src/core/game-state.js";
 
 const objectives = { goal: "Increase the horizontal scroll offset", constraints: [], milestones: [] };
 const budget = () => new RequestBudget({ maxRequests: 8, timeoutMs: 1000, intervalMs: 0, retries: 0 });
 const decision = (actionId: string) => ({ actionId, model: "test-jev", confidence: null, probabilities: {}, usage: { inputTokens: 0, outputTokens: 0 } });
+
+test("profile-owned decision support is bounded, copied, and preserved through optional vision", async () => {
+  const emulator = new GameBoyEmulator(createDemoRom());
+  const facts = ["The fixture scroll offset can increase."];
+  const reader: GameReader = { descriptor: new DemoGameReader().descriptor,
+    readState(memory) {
+      assert.equal(memory.readRom!(0x134, 1)[0], 71);
+      return { values: { phase: "running" }, descriptions: {},
+        decisionSupport: { facts, actionFacts: { press_right: ["Increase the offset."], press_left: ["Decrease it."] } } };
+    },
+    availableActions(_state, actions) { return actions.filter(action => ["press_right", "wait", "stop"].includes(action.id)); },
+  };
+  try {
+    const provider = bindGameReader(reader, emulator, 8);
+    const snapshot = provider.read(emulator.captureFrame());
+    assert.deepEqual(Object.keys(snapshot.state.decisionSupport!.actionFacts), ["press_right"]);
+    (snapshot.state.decisionSupport!.facts as string[])[0] = "Changed in the caller";
+    assert.equal(facts[0], "The fixture scroll offset can increase.");
+    const observation = await withVision(createStateObserver(provider), createMockVisionProvider()).observe(
+      emulator.captureFrame(), undefined, objectives, new AbortController().signal);
+    assert.equal(observation.gameState!.decisionSupport!.facts[0], facts[0]);
+    const good = provider.read(emulator.captureFrame()).state;
+    for (const support of [
+      { facts: Array.from({ length: 33 }, () => "Too many"), actionFacts: {} },
+      { facts: ["x".repeat(501)], actionFacts: {} },
+      { facts: [], actionFacts: { wait: Array.from({ length: 9 }, () => "Too many") } },
+      { facts: [], actionFacts: { "invalid id": ["Invalid"] } },
+      { facts: [], actionFacts: [] },
+    ]) assert.throws(() => validateGameState({ ...good, decisionSupport: support } as unknown as typeof good, 0), /decision support/);
+    assert.equal(emulator.frameNumber, 0);
+  } finally { emulator.dispose(); }
+});
 
 test("reader strategies are selected by console and exact ROM revision, with independent factories", () => {
   const first = new GameBoyEmulator(createDemoRom());

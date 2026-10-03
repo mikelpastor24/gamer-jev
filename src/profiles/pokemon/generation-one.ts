@@ -1,7 +1,8 @@
 import type { AgentAction, GameState, StateValue } from "../../core/agent.js";
-import type { MemoryReader } from "../../core/emulator.js";
-import type { GameReader, GameReaderDescriptor, GameStateData } from "../../core/game-reader.js";
+import type { GameReader, GameReaderDescriptor, GameReaderMemory, GameStateData } from "../../core/game-reader.js";
 import { countBits, decodeBcd, decodeName, readTextScreen } from "./encoding.js";
+import { GenerationOneDecisionSupport } from "./decision-support.js";
+import type { PokemonNavigationLayout } from "./navigation-layout.js";
 
 /** Addresses vary by engine, language, and revision. This contract is only for English Gen I. */
 export interface GenerationOneLayout {
@@ -56,16 +57,20 @@ function menuLabel(text: string): string {
 export class GenerationOnePokemonReader implements GameReader {
   readonly descriptor: GameReaderDescriptor;
   private readonly layout: GenerationOneLayout;
+  private readonly support: GenerationOneDecisionSupport;
 
-  constructor(descriptor: GameReaderDescriptor, layout: GenerationOneLayout) {
+  constructor(descriptor: GameReaderDescriptor, layout: GenerationOneLayout, navigation?: PokemonNavigationLayout) {
     this.descriptor = structuredClone(descriptor);
     this.layout = { ...layout };
+    this.support = new GenerationOneDecisionSupport(navigation);
     for (const address of Object.values(layout)) if (!Number.isSafeInteger(address) || address < 0xc000 || address > 0xdfff) {
       throw new Error("Generation I layout addresses must be in Game Boy work RAM.");
     }
   }
 
-  readState(memory: MemoryReader): GameStateData {
+  reset(): void { this.support.reset(); }
+
+  readState(memory: GameReaderMemory): GameStateData {
     const ram = memory.readMemory(0xc000, 0x2000);
     const bytes = (address: number, length: number) => {
       if (address < 0xc000 || address + length > 0xe000) throw new Error("Generation I layout read exceeds work RAM.");
@@ -86,6 +91,11 @@ export class GenerationOnePokemonReader implements GameReader {
     const values: Record<string, StateValue> = {};
     const descriptions: Record<string, string> = {};
     const add = (name: string, value: StateValue, description: string) => { values[name] = value; descriptions[name] = description; };
+    const enriched = (): GameStateData => {
+      const extra = this.support.read(memory, ram, values);
+      return { values: { ...values, ...extra.values }, descriptions: { ...descriptions, ...extra.descriptions },
+        ...(extra.decisionSupport ? { decisionSupport: extra.decisionSupport } : {}) };
+    };
     add("phase", phase, "Memory evidence: menu has a visible box cursor; text has a box; battle uses the battle flag. Boot, intro, and transitions may need waiting.");
     add("gameStarted", started, "The game timer is enabled and a terminated player name exists. Introductory map defaults are not exploration state.");
     add("screenTextTop", screen.top, "Text inside complete memory tile-map boxes in rows 0-8; > marks a cursor. May be partially printed; clipped to 256 characters.");
@@ -99,7 +109,7 @@ export class GenerationOnePokemonReader implements GameReader {
       add("namingPrompt", screen.naming.prompt, "Naming-screen heading, decoded only when its alphabet grid is present.");
       add("enteredName", screen.naming.name, "Current naming entry. A appends a selected character, B deletes, SELECT switches case, and START finishes a nonempty name.");
     }
-    if (!started) return { values, descriptions };
+    if (!started) return enriched();
     add("playerName", playerName!, "Decoded player name.");
     const rivalName = decodeName(bytes(layout.rivalName, 11));
     if (rivalName) add("rivalName", rivalName, "Decoded rival name.");
@@ -147,13 +157,13 @@ export class GenerationOnePokemonReader implements GameReader {
       add("battlePlayerMoves", this.describeMoves(bytes(layout.battleMon, 29), true), "Active battle move slots and remaining PP; party PP can lag until the battle ends.");
       add("battleEnemy", this.describeMon(bytes(layout.enemyMon, 29), bytes(layout.enemyNick, 11), true), "Current enemy Pokémon and HP; omitted after battle. May be unavailable during send-out transitions.");
     }
-    return { values, descriptions };
+    return enriched();
   }
 
   availableActions(state: GameState, actions: readonly AgentAction[]): readonly AgentAction[] {
     const emptyPartySelection = state.values.menuKind === "overworld" && state.values.menuSelection === "POKEMON" && state.values.partyCount === 0;
     return actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1 &&
-      !(emptyPartySelection && action.buttons[0] === "A"))
+      !(emptyPartySelection && action.buttons[0] === "A") && this.support.allows(state, action.buttons[0]!))
       .map((action) => {
         if (action.stop || action.id === "wait") return action;
         const button = action.buttons[0]!;
@@ -167,10 +177,12 @@ export class GenerationOnePokemonReader implements GameReader {
               "Open or close the overworld menu where permitted. This manages party, items, saving, and options; it does not move the player or obtain a starter." : "Leave the title screen or confirm supported menus.",
           SELECT: "Use SELECT only where the current menu supports it, such as naming or item ordering.",
         };
+        const evidence = state.decisionSupport?.actionFacts[action.id] ?? [];
         const description = descriptions[button] ?? (menu || state.values.phase === "battle" ? `Move the menu cursor ${button.toLowerCase()} where supported.` : `Move or turn ${button.toLowerCase()} in the overworld; navigate choices during the intro.`);
         // Menu repeats can skip choices with long holds. Preserve user-configured shorter durations.
         const frames = Math.min(action.frames, 8);
-        return { ...action, frames, description: `${description} Press ${button} for ${frames} frames, then release for 4 frames.` };
+        const detail = evidence.join(" ");
+        return { ...action, frames, description: `${description}${detail ? ` Facts: ${detail.slice(0, 270)}` : ""} Press ${button} for ${frames} frames, then release for 4 frames.` };
       });
   }
 

@@ -13,4 +13,15 @@ export function validateGameState(state: GameState, frame: number): void {
   for (const [name, description] of Object.entries(state.descriptions)) {
     if (!Object.hasOwn(state.values, name) || typeof description !== "string" || description.length > 500) throw new Error("Invalid game-state field description.");
   }
+  if (state.decisionSupport !== undefined) {
+    const support = state.decisionSupport;
+    const validFacts = (facts: unknown, maximum: number) => Array.isArray(facts) && facts.length <= maximum &&
+      facts.every((fact: unknown) => typeof fact === "string" && fact.length > 0 && fact.length <= 500);
+    if (!support || typeof support !== "object" || !validFacts(support.facts, 32) ||
+        !support.actionFacts || typeof support.actionFacts !== "object" || Array.isArray(support.actionFacts) ||
+        Object.keys(support.actionFacts).length > 32 || Object.entries(support.actionFacts).some(([id, facts]) =>
+          !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(id) || !validFacts(facts, 8))) {
+      throw new Error("Invalid bounded game decision support.");
+    }
+  }
 }

@@ -18,6 +18,8 @@ const objectives = { goal: "Inspect the fixture", constraints: [`Protect ${secre
 
 test("both Jev adapters inspect the actual request and only supported response fields without exposing credentials", async () => {
   const context: DecisionContext = { objectives, console: "fixture", frame: 42, observation: "Menu",
+    gameState: { source: "fixture", frame: 42, values: { phase: "transition" }, descriptions: {},
+      decisionSupport: { facts: ["The fixture is transitioning."], actionFacts: { wait: ["Wait for stable input."] } } },
     unchangedScreens: 0, history: [], actions: [{ id: "wait", description: "Wait safely", buttons: [], frames: 8, stop: false }] };
   for (const mode of ["typesafe", "gateway"] as const) {
     const inspected: DecisionInspectionEvent[] = [];
@@ -35,6 +37,7 @@ test("both Jev adapters inspect the actual request and only supported response f
       },
     });
     const decision = await provider.decide(context, new AbortController().signal, (event) => inspected.push(event));
+    assert.deepEqual((sent as { state: DecisionContext }).state.gameState!.decisionSupport, context.gameState!.decisionSupport);
     const request = inspected.find((event) => event.type === "request")!;
     const response = inspected.find((event) => event.type === "response")!;
     assert.equal(request.type, "request"); assert.equal(response.type, "response");

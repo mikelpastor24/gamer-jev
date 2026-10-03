@@ -56,6 +56,15 @@ export interface MemoryReader {
   readMemory(address: number, length: number): Uint8Array;
 }
 
+/** Optional, read-only cartridge access, independent of the currently mapped CPU bank. */
+export interface RomReader {
+  readRom(offset: number, length: number): Uint8Array;
+}
+
+export function hasRom(emulator: Emulator): emulator is Emulator & RomReader {
+  return "readRom" in emulator && typeof emulator.readRom === "function";
+}
+
 export function hasMemory(emulator: Emulator): emulator is Emulator & MemoryReader {
   return emulator.descriptor.capabilities.readMemory && "readMemory" in emulator && typeof emulator.readMemory === "function";
 }

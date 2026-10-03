@@ -41,8 +41,22 @@ shared English Gen I decoding from exact Pokémon Red, Blue, and Yellow ROM hash
 Red/Blue share a verified layout; Yellow has its own addresses. Startup, naming,
 the starting room, and overworld menus were checked locally for all three;
 party/battle decoding uses synthetic RAM tests. Other Pokémon revisions and
-generations, collision maps, full-game competence, and verified progress checks
+generations, complete field mechanics, full-game competence, and verified progress checks
 remain future work.
+
+Readers can return bounded optional `decisionSupport` facts and per-action facts.
+The Pokemon reader delegates these to `GenerationOneDecisionSupport` inside its
+profile. It derives walking/cycling collision, objects/signs, warps, connections,
+and local shortest first inputs from live RAM and read-only cartridge slices.
+`RomReader` is optional; Game Boy reads copy at most 16 KiB and validate bounds.
+Keep ROM bytes/assets out of observations, logs, and the viewer. Cache only up to
+four immutable ROM banks, clear on reset/restore, and recalculate live routes.
+Yellow collision tables use bank 1, unlike Red/Blue's fixed bank. Preserve unknown
+surfing/Strength controls and warp-underfoot triggers. The reader distinguishes
+turning from walking, waits during live movement, and excludes confirmed blocked
+walking. Route facts never select a goal, execute a path, or verify completion.
+Local mechanical routes from the house floors into Pallet Town were checked for
+all three revisions; synthetic tests cover legality and timing boundaries.
 
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables

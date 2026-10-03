@@ -1,7 +1,7 @@
 import type { GameReader, GameReaderDescriptor, GameReaderRegistration } from "../core/game-reader.js";
 import type { GameState, GameStateProvider } from "../core/agent.js";
 import type { Emulator } from "../core/emulator.js";
-import { hasMemory } from "../core/emulator.js";
+import { hasMemory, hasRom } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
 import type { DiagnosticSink } from "../core/diagnostics.js";
@@ -22,7 +22,8 @@ export function bindGameReader(reader: GameReader, emulator: Emulator, actionFra
   }
   if (!hasMemory(emulator)) throw new Error("This console adapter does not support memory-based game readers.");
   let defaults = controllerActions(emulator.descriptor.buttons, actionFrames);
-  const memory = Object.freeze({ readMemory: (address: number, length: number) => emulator.readMemory(address, length) });
+  const memory = Object.freeze({ readMemory: (address: number, length: number) => emulator.readMemory(address, length),
+    ...(hasRom(emulator) ? { readRom: (offset: number, length: number) => emulator.readRom(offset, length) } : {}) });
   let previous = "";
   diagnostics?.({ component: "game-reader", level: "info", event: "bound", frame: emulator.frameNumber,
     data: { reader: reader.descriptor.id, console: reader.descriptor.consoleId, romSha256: emulator.rom.sha256 } });
@@ -39,16 +40,23 @@ export function bindGameReader(reader: GameReader, emulator: Emulator, actionFra
       if (frame.number !== emulator.frameNumber) throw new Error("Cannot read game state for a stale emulator frame.");
       stage = "read-state";
       const data = reader.readState(memory);
-      const state: GameState = { source: reader.descriptor.id, frame: frame.number,
-        values: { ...data.values }, descriptions: { ...data.descriptions } };
+      let state: GameState = { source: reader.descriptor.id, frame: frame.number,
+        values: { ...data.values }, descriptions: { ...data.descriptions },
+        ...(data.decisionSupport === undefined ? {} : { decisionSupport: structuredClone(data.decisionSupport) }) };
       stage = "validate-state";
       validateGameState(state, frame.number);
       stage = "available-actions";
       const actions = reader.availableActions(structuredClone(state), structuredClone(defaults));
       stage = "validate-actions";
       validateAgentActions(actions, emulator.descriptor.buttons);
+      if (state.decisionSupport) {
+        // Action-specific facts refer only to choices actually offered in this snapshot.
+        const legalIds = new Set(actions.map(action => action.id));
+        state = { ...state, decisionSupport: { ...state.decisionSupport,
+          actionFacts: Object.fromEntries(Object.entries(state.decisionSupport.actionFacts).filter(([id]) => legalIds.has(id))) } };
+      }
       if (diagnostics) {
-        const fingerprint = JSON.stringify({ values: state.values, descriptions: state.descriptions, actions });
+        const fingerprint = JSON.stringify({ values: state.values, descriptions: state.descriptions, decisionSupport: state.decisionSupport, actions });
         if (fingerprint !== previous) {
           previous = fingerprint;
           diagnostics({ component: "game-reader", level: "debug", event: "state-read", frame: frame.number, data: {
