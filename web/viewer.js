@@ -21,9 +21,10 @@ let playbackSpeed;
 let speedPending = false;
 let gameId;
 let loadingRom = false;
+let welcomeShown = false;
 const speedControl = document.querySelector("#emulation-speed");
 const inspector = createInspector((visible) => { if (!visible) clearInput(); });
-const agentSettings = createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
+const agentSettings = createAgentSettingsEditor({ request, message, onApply(status) { audio.reset(); renderStatus(status); clearInput(); } });
 createRomLibrary({ request, message, onLoad(status) { renderStatus(status); } });
 createSettingsHelp();
 
@@ -58,10 +59,11 @@ function heldButtons() {
 async function sendInput() {
   if (!initialized || inputPending || agentMode || loadingRom) return;
   inputPending = true;
+  const currentGameId = gameId;
   const buttons = heldButtons();
   document.querySelectorAll("#controller button").forEach((element) => element.classList.toggle("active", buttons.includes(element.dataset.button)));
   try { await request("/api/input", { buttons }); }
-  catch (error) { message(error.message, true); }
+  catch (error) { if (currentGameId === gameId) message(error.message, true); }
   finally { inputPending = false; }
 }
 
@@ -151,12 +153,23 @@ function renderStatus(status) {
     document.querySelector("#agent-stop").textContent = agent.stopReason ?? "";
     document.querySelector("#agent-stop").hidden = !agent.stopReason;
     document.querySelector("#toggle").disabled = agent.state === "stopped" || agent.state === "error";
+  } else {
+    document.querySelector("#session-mode").textContent = "Manual session";
+    document.querySelector("#session-intro").textContent = status.launcher ? "Choose your cartridge in Settings → ROMs, then play manually or enable the agent." : "Play, inspect, and pick up where you left off.";
+    document.querySelector(".keyboard-hint").textContent = "Click screen to play · Arrows · Z / X for A / B · Enter to start · Shift to select";
+    document.querySelector("#privacy-note").textContent = "Manual mode runs locally without model requests.";
   }
   inspector.setStatus(status);
   for (const id of ["save", "load", "reset", "step"]) document.querySelector(`#${id}`).disabled = loadingRom;
   if (loadingRom) document.querySelector("#toggle").disabled = true;
   else if (!status.agent) document.querySelector("#toggle").disabled = false;
   if (status.error) message(status.error, true);
+  if (status.launcher && !welcomeShown) {
+    welcomeShown = true;
+    message("Choose a local ROM in Settings, or close Settings and resume the included demo.");
+    document.querySelector("#open-settings").click();
+    document.querySelector("#roms-tab").click();
+  }
 }
 
 async function command(path, success) {

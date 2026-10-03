@@ -82,7 +82,7 @@
         <button id="view-tab" type="button" role="tab" aria-selected="true" aria-controls="settings-view" data-settings-tab="view">Display</button>
         <button id="session-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-session" data-settings-tab="session" tabindex="-1">Session</button>
         <button id="roms-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-roms" data-settings-tab="roms" tabindex="-1">ROMs</button>
-        <button id="agent-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-agent" data-settings-tab="agent" data-agent-only hidden tabindex="-1">Agent</button>
+        <button id="agent-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-agent" data-settings-tab="agent" hidden tabindex="-1">Agent</button>
       </div>
       <section id="settings-view" class="settings-body" role="tabpanel" aria-labelledby="view-tab">
         <h3>Visible panels</h3>
@@ -126,8 +126,18 @@
       <section id="settings-agent" class="settings-body" role="tabpanel" aria-labelledby="agent-tab" hidden>
         <form id="agent-settings-form" novalidate>
           <fieldset id="agent-settings-fields" disabled>
-            <div class="agent-section-choice"><div class="setting-heading"><label for="agent-settings-section" data-help="Switch between objectives and session limits. Your drafts are kept while switching; Apply changes saves both sections together.">Edit</label></div><select id="agent-settings-section"><option value="objectives">Objectives</option><option value="limits">Limits</option></select></div>
-            <div id="agent-objectives" class="agent-settings-fields">
+            <div class="agent-section-choice"><div class="setting-heading"><label for="agent-settings-section" data-help="Switch between mode and models, objectives, and session limits. Your drafts are kept while switching; Apply changes saves all sections together.">Edit</label></div><select id="agent-settings-section"><option value="models">Mode &amp; models</option><option value="objectives">Objectives</option><option value="limits">Limits</option></select></div>
+            <div id="agent-models" class="agent-settings-fields">
+              <div><div class="setting-heading"><label for="player-mode" data-help="Choose Manual to control the game yourself, or Agent to let Jev choose actions. Applying a change pauses the game and cancels pending work while preserving the current cartridge and agent counters.">Play mode</label></div><select id="player-mode"><option value="manual">Manual</option><option value="agent">Agent</option></select></div>
+              <div class="agent-limit-grid">
+                <div><div class="setting-heading"><label for="decision-provider" data-help="Choose direct TypeSafe, Vercel AI Gateway, or offline mock decisions. Remote providers require their key in .env. Disabled options have no configured key; restart after editing .env. Key presence does not verify account access.">Jev provider</label></div><select id="decision-provider"></select></div>
+                <div><div class="setting-heading"><label for="vision-provider-select" data-help="Choose vision independently of Jev. Disabled uses only a compatible game reader. Gateway describes screenshots with a vision-capable model; mock supplies fixed descriptions for testing. Vision is used only in Agent mode.">Vision</label></div><select id="vision-provider-select"></select></div>
+                <div><div class="setting-heading"><label for="decision-model" data-help="The Jev model ID for the selected provider. Direct TypeSafe uses IDs such as jev-latest; Gateway uses typesafe-ai/jev. The initial value comes from .env. Mock decisions need no model.">Jev model</label></div><input id="decision-model" type="text" maxlength="160" autocomplete="off" spellcheck="false"></div>
+                <div><div class="setting-heading"><label for="vision-model" data-help="The Gateway provider/model ID for a model that accepts images. The initial value comes from VISION_MODEL in .env. Changing this does not change Jev; the same Gateway key can authenticate both providers.">Vision model</label></div><input id="vision-model" type="text" maxlength="160" autocomplete="off" spellcheck="false"></div>
+              </div>
+              <p id="provider-availability" class="agent-settings-hint">Credentials stay in .env. Set an objective before enabling the agent.</p>
+            </div>
+            <div id="agent-objectives" class="agent-settings-fields" hidden>
               <div><div class="setting-heading"><label for="agent-goal-input" data-help="The main goal sent to Jev with every decision, such as reach the next checkpoint. Required; up to 2,000 characters. A stated goal is not proof that the game has been completed.">Objective</label></div><textarea id="agent-goal-input" rows="2" maxlength="2000" required></textarea></div>
               <div><div class="setting-heading"><label for="agent-constraints-input" data-help="Optional instructions that guide Jev, such as avoid using limited items. Enter one per line, up to 16 lines of 500 characters each. These are model instructions, not guaranteed restrictions enforced by the emulator.">Constraints</label></div><textarea id="agent-constraints-input" rows="3" maxlength="8015" placeholder="One constraint per line"></textarea></div>
               <div><div class="setting-heading"><label for="agent-milestones-input" data-help="Optional intermediate goals sent to Jev alongside the main objective. Enter one per line, up to 16 lines of 500 characters each. Milestones are guidance; they are not automatically checked off.">Milestones</label><span class="optional">Optional</span></div><textarea id="agent-milestones-input" rows="2" maxlength="8015" placeholder="One milestone per line"></textarea></div>
@@ -144,7 +154,7 @@
               <p class="agent-settings-hint">Jev can choose to stop. Game completion remains unverified.</p>
             </div>
           </fieldset>
-          <p class="agent-settings-hint">Applying changes pauses the agent. Resume when ready.</p>
+          <p class="agent-settings-hint">Applying changes pauses the game. Resume when ready.</p>
           <div class="settings-actions"><div class="setting-action"><button id="apply-agent-settings" class="primary" type="submit" disabled data-help="Validate and apply both sections together, then pause the agent and cancel pending work. Counters, elapsed time, and game state are retained. Close Settings and Resume when ready.">Apply changes</button></div><div class="setting-action"><button id="reload-agent-settings" class="quiet" type="button" data-help="Discard unapplied drafts and reload the currently applied agent settings. This does not reset the game, counters, or elapsed time.">Reload settings</button></div></div>
         </form>
       </section>

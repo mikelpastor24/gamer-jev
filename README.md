@@ -27,10 +27,14 @@ development targets; CI checks both.
 
 ```sh
 npm ci
-npm run demo
+npm start
 ```
 
 Open the URL printed by the CLI, normally **http://127.0.0.1:8787**.
+No arguments are required. The application starts paused in manual mode and
+opens **Settings → ROMs** so you can choose a cartridge from your local `roms/`
+folder. The included demo is loaded initially; close Settings and Resume to try
+it, or use `npm run demo` to start the demo directly.
 The demo is an original checkerboard program that scrolls while you hold a
 direction and plays a steady 440 Hz test tone when sound is enabled. It is
 generated in memory and contains no third-party game assets.
@@ -47,8 +51,28 @@ by Git. Do not add commercial ROMs or generated gameplay artifacts to the repo.
 
 ## Let Jev play
 
-Choose the decision provider with `--agent` and the visual provider with
-`--vision`. Every combination is supported:
+Copy `.env.example` to `.env`, set the keys you want to use, and run `npm start`.
+The server reads `.env` even for manual play. **Settings → Agent → Mode & models**
+lets you choose **Manual** or **Agent**, the Jev provider, and vision independently.
+Providers with no configured key are disabled; mock providers remain available
+offline. Key presence does not verify credits, account access, or model support.
+The browser receives provider availability and model identifiers, never API keys.
+Restart the application after editing `.env`.
+
+Model fields start with `TYPESAFE_MODEL`, `JEV_MODEL`, or `VISION_MODEL` from `.env`
+and can be edited in the application. Jev remains a TypeSafe decision model;
+Gateway vision requires a model that supports image inputs. Set an objective
+in **Objectives**, optionally adjust **Limits**, and use **Apply changes**.
+Applying pauses the game and cancels pending work; close Settings and Resume.
+Switching modes, providers, or models preserves the cartridge, agent counters,
+request budget, and elapsed time. It clears recent history and inspection so
+the next decision uses the current game state. Manual play makes no model calls.
+The session timer begins when the agent is first enabled and includes later
+pauses and time spent in manual mode. Loading a ROM starts a fresh session and
+keeps applied mode, model choices, objectives, and limits.
+
+You can also choose the decision provider with `--agent` and the visual provider
+with `--vision`. Every combination is supported:
 
 | Component | Option | Credential |
 | --- | --- | --- |
@@ -247,7 +271,7 @@ after a Jev stop or provider error; it remains paused until you explicitly resum
 Decision/request counters and elapsed time are retained. Time ceilings are total
 seconds since session startup, including pauses, rather than a new countdown
 after each edit. A ceiling below already consumed counts or time keeps the
-session stopped. Start a new process for fresh counters. Reset and restore clear
+session stopped. Load a ROM or start a new process for fresh counters. Reset and restore clear
 visual/action history and discard pending responses while retaining the current
 session's counters. Checkpoints restore emulator state; they do not restore agent
 history, edited settings, or provider budgets.

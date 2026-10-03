@@ -24,6 +24,7 @@ function readPreferences() {
 export function createInspector(onControllerVisibility) {
   let preferences = readPreferences();
   let hasAgent = false;
+  let playerConfigurable = false;
   let focused = false;
   let expanded = null;
   let mobileTab = "game";
@@ -78,6 +79,7 @@ export function createInspector(onControllerVisibility) {
     workspace.dataset.mobileActive = mobileTab;
     document.querySelectorAll("[data-tab]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.tab === mobileTab)));
     document.querySelectorAll("[data-agent-only]").forEach((element) => { element.hidden = !hasAgent; });
+    query("#agent-tab").hidden = !hasAgent && !playerConfigurable;
     query("#focus-game").checked = inspector.hidden;
     const showController = preferences.controller ?? !hasAgent;
     query("#show-controller").checked = showController;
@@ -389,7 +391,9 @@ export function createInspector(onControllerVisibility) {
     setStatus(status) {
       const agent = Boolean(status.agent);
       wantedExchangeRevision = status.agent?.exchange?.revision ?? 0;
-      if (agent !== hasAgent) { hasAgent = agent; applyLayout(); }
+      if (agent !== hasAgent || playerConfigurable !== Boolean(status.playerConfigurable)) {
+        hasAgent = agent; playerConfigurable = Boolean(status.playerConfigurable); applyLayout();
+      }
       selectedAction = status.agent?.action;
       query("#game-reader").textContent = status.gameReader === "emulator" ? "Emulator metadata · no semantic reader" : `Reader: ${status.gameReader}`;
       query("#game-reader").title = query("#game-reader").textContent;

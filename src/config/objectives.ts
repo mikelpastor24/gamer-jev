@@ -1,9 +1,9 @@
 import { readFile, stat } from "node:fs/promises";
 import type { Objectives } from "../core/agent.js";
 
-export function parseObjectives(value: unknown): Objectives {
+export function parseObjectives(value: unknown, allowEmptyGoal = false): Objectives {
   if (!value || typeof value !== "object" || !("goal" in value) ||
-      typeof value.goal !== "string" || !value.goal.trim() || value.goal.length > 2000) {
+      typeof value.goal !== "string" || (!allowEmptyGoal && !value.goal.trim()) || value.goal.length > 2000) {
     throw new Error("Objectives must contain a nonempty goal of at most 2,000 characters.");
   }
   const list = (name: "constraints" | "milestones"): string[] => {

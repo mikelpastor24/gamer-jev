@@ -49,11 +49,11 @@ export class AgentSession {
   private actions: readonly AgentAction[];
   private settings: AgentSettings;
   private settingsRevision = 0;
-  private readonly visionProvider: VisionProviderId;
+  private visionProvider: VisionProviderId;
   private readonly startedAt = Date.now();
   private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(private readonly emulator: Emulator, private readonly options: AgentSessionOptions) {
+  constructor(private readonly emulator: Emulator, private options: AgentSessionOptions) {
     this.settings = parseAgentSettings({ objectives: options.objectives, maxDecisions: options.maxDecisions,
       maxSeconds: options.maxSeconds, maxRequests: options.budget.limits.maxRequests, actionFrames: options.actionFrames });
     this.actions = controllerActions(emulator.descriptor.buttons, options.actionFrames);
@@ -90,6 +90,16 @@ export class AgentSession {
 
   /** Local session recreation; browser inspection must use the redacted configuration instead. */
   copySettings(): AgentSettings { return structuredClone(this.settings); }
+
+  /** Replace validated providers while retaining the budget, counters, and original timer. */
+  setProviders(providers: Pick<AgentSessionOptions, "mode" | "visionProvider" | "observer" | "decider">): void {
+    this.clearHistory();
+    this.options = { ...this.options, ...providers };
+    this.visionProvider = providers.visionProvider ?? "none";
+    this.options.observer.setActionFrames?.(this.settings.actionFrames);
+    this.record({ type: "session-providers", mode: this.options.mode, visionProvider: this.visionProvider,
+      frame: this.emulator.frameNumber, decisions: this.decisions, requests: this.options.budget.requests });
+  }
 
   /** Editing settings explicitly reopens an ended session, paused, without resetting any counters. */
   updateSettings(value: unknown, revision: unknown): void {

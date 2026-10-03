@@ -3,6 +3,15 @@ import type { Frame } from "./emulator.js";
 export type DecisionProviderId = "typesafe" | "gateway" | "mock";
 export type VisionProviderId = "none" | "gateway" | "mock";
 
+/** Provider selection contains public identifiers only; credentials stay on the server. */
+export interface PlayerSelection {
+  readonly mode: "manual" | "agent";
+  readonly decisionProvider: DecisionProviderId;
+  readonly visionProvider: VisionProviderId;
+  readonly decisionModel: string;
+  readonly visionModel: string;
+}
+
 export interface Objectives {
   readonly goal: string;
   readonly constraints: readonly string[];

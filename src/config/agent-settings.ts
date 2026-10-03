@@ -10,7 +10,7 @@ export function parseSessionLimit(value: unknown, name: string, maximum: number)
 }
 
 /** Validate the entire update before changing the running session. */
-export function parseAgentSettings(value: unknown): AgentSettings {
+export function parseAgentSettings(value: unknown, allowEmptyGoal = false): AgentSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid agent settings.");
   const data = value as Record<string, unknown>;
   if (Object.keys(data).some((key) => !["objectives", "maxDecisions", "maxRequests", "maxSeconds", "actionFrames"].includes(key))) {
@@ -18,7 +18,7 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   }
   const actionFrames = parseSessionLimit(data.actionFrames, "Action frames", 600);
   if (actionFrames === null) throw new Error("Action frames must remain bounded.");
-  return { objectives: parseObjectives(data.objectives), actionFrames,
+  return { objectives: parseObjectives(data.objectives, allowEmptyGoal), actionFrames,
     maxDecisions: parseSessionLimit(data.maxDecisions, "Decision limit", 10_000),
     maxRequests: parseSessionLimit(data.maxRequests, "Request limit", 10_000),
     maxSeconds: parseSessionLimit(data.maxSeconds, "Session seconds", 86_400) };

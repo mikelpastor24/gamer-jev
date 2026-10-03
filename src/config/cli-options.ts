@@ -9,6 +9,7 @@ export interface CliOptions {
   consoleId: string;
   romPath: string | undefined;
   demo: boolean;
+  launcher: boolean;
   headless: boolean;
   frames: number | null;
   buttons: string[];
@@ -75,8 +76,9 @@ export function parseCliOptions(args: string[]): CliOptions {
   }, strict: true, allowPositionals: false });
   const speed = parseEmulationSpeed(values.speed.trim() ? Number(values.speed) : NaN);
   if (!values.help && !values["list-consoles"] && !values["list-profiles"]) {
-    if (Boolean(values.rom) === Boolean(values.demo)) throw new Error("Supply exactly one of --rom <path> or --demo.");
-    if (values.demo && values.console !== "game-boy") throw new Error("The synthetic demo is a Game Boy ROM.");
+    if (values.rom !== undefined && !values.rom.trim()) throw new Error("--rom requires a local ROM path.");
+    if (values.rom && values.demo || values.headless && !values.rom && !values.demo) throw new Error("Choose --rom <path> or --demo. Headless play requires an explicit source.");
+    if ((values.demo || !values.rom) && values.console !== "game-boy") throw new Error("The synthetic demo is a Game Boy ROM.");
     if (!values.headless && (values.frames !== undefined || values.buttons !== undefined)) {
       throw new Error("--frames and --buttons require --headless.");
     }
@@ -107,14 +109,15 @@ export function parseCliOptions(args: string[]): CliOptions {
     listProfiles: values["list-profiles"] ?? false,
     consoleId: values.console,
     romPath: values.rom,
-    demo: values.demo ?? false,
+    demo: values.demo ?? !values.rom,
+    launcher: !values.rom && !values.demo && !values.headless,
     headless: values.headless ?? false,
     frames: values.agent && (values.frames === "unlimited" || values.unlimited && values.frames === undefined) ? null :
       integer(values.frames ?? (values.agent ? "1000000" : "120"), "--frames", 1, 1_000_000),
     buttons: values.buttons === undefined ? [] : values.buttons.split(",").map((button) => button.trim().toUpperCase()),
     port: integer(values.port, "--port", 1, 65535),
     speed,
-    paused: values.paused ?? false,
+    paused: values.paused ?? (!values.rom && !values.demo),
     debug: values.debug ?? false,
     loadPath: values.load,
     savePath: values.save,
@@ -132,13 +135,14 @@ export function parseCliOptions(args: string[]): CliOptions {
   };
 }
 
-export const CLI_HELP = `Usage: npm start -- --rom <path> [options]
+export const CLI_HELP = `Usage: npm start
+       npm start -- --rom <path> [options]
        npm run demo
 
   --console <id>       Console adapter (default: game-boy)
   --list-consoles      List available adapters
   --list-profiles      List registered game readers
-  --rom <path>         Your local Game Boy ROM
+  --rom <path>         Your local Game Boy ROM; omit to choose one in Settings
   --demo               Run the original synthetic demo ROM
   --headless           Run without a viewer
   --frames <count>     Headless frame ceiling; unlimited requires an agent (default: 120)

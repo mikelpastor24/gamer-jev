@@ -57,6 +57,20 @@ Explicit `--unlimited` or null ceilings disable session limits; action durations
 HTTP timeouts, retries, payloads, history, and recordings stay bounded. Jev's stop
 action remains unverified completion until a profile supplies verified progress.
 
+`npm start` without arguments launches the included demo paused in manual mode
+and opens Settings → ROMs. `.env` is loaded at startup for manual and agent play.
+Settings → Agent → Mode & models chooses manual/agent play, independent Jev and
+vision providers, and bounded model IDs. Expose configured-key availability only,
+never key values; key presence is not verified provider access. Runtime changes
+validate the full selection/settings and revision before pausing or cancelling.
+They preserve emulator state, existing agent counters, shared request attempts,
+and elapsed time, and clear recent history/inspection when the selection changes.
+Keep a paused agent and its budget while playing manually; re-enabling it must
+not reset limits. The timer starts at first activation and includes manual time.
+Carry applied settings and provider choices across ROM changes, including from
+manual mode. New cartridges get fresh sessions. Reject stale viewer commands
+and inspection after mode/model edits as well as cartridge switches.
+
 Viewer speed is configurable at startup and in Settings → Session, up to 32×.
 Frame pacing scales its bounded batch with speed, discards provider wait time,
 and resets on speed edits and resume. Speed edits preserve pending agent work,
@@ -72,8 +86,9 @@ cleanup. Checkpoints after switching are isolated by console and ROM hash.
 Guard browser commands and inspection against stale game IDs. Never expose
 ROM bytes, absolute catalog paths, or provider credentials through the library.
 
-Use `npm ci` to install dependencies, `npm run demo` for the original synthetic
-ROM, and `npm start -- --rom "roms/my-game.gb"` for a local ROM. Validation uses
+Use `npm ci` to install dependencies, `npm start` for the interactive launcher,
+`npm run demo` for the original synthetic ROM, or `npm start -- --rom "roms/my-game.gb"`
+for a local ROM. Validation uses
 `npm run typecheck`, `npm test`, and `npm run build`, or `npm run check` for all
 three. Tests do not require commercial ROMs or API access. CI targets Windows
 and Linux. Keep these commands and the README aligned with actual behavior.

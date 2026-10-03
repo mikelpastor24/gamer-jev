@@ -1,4 +1,5 @@
 const query = (selector) => document.querySelector(selector);
+const providerControl = (kind) => query(kind === "vision" ? "#vision-provider-select" : "#decision-provider");
 const limits = [
   ["maxDecisions", "#agent-limit-decisions", 100, 10_000],
   ["maxRequests", "#agent-limit-requests", 300, 10_000],
@@ -13,6 +14,10 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
   let gameId = 0;
   let generation = 0;
   let boundedValues = [];
+  let playerEnabled = false;
+  let providers;
+  let activeProviders = {};
+  let modelDrafts = {};
   const form = query("#agent-settings-form");
   const fields = query("#agent-settings-fields");
   const apply = query("#apply-agent-settings");
@@ -21,10 +26,54 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
 
   function setSection(name) {
     query("#agent-settings-section").value = name;
+    query("#agent-models").hidden = name !== "models";
     query("#agent-objectives").hidden = name !== "objectives";
     query("#agent-limits").hidden = name !== "limits";
   }
   query("#agent-settings-section").addEventListener("change", (event) => setSection(event.target.value));
+
+  function updateModels() {
+    for (const kind of ["decision", "vision"]) {
+      const provider = providerControl(kind).value;
+      const input = query(`#${kind}-model`);
+      input.disabled = provider === "mock" || provider === "none";
+    }
+    const manual = query("#player-mode").value === "manual";
+    const missing = providers.decisions.filter((provider) => !provider.available).map((provider) => provider.credential);
+    query("#provider-availability").textContent = manual ? "Manual play makes no model requests. Set an objective before enabling the agent." :
+      missing.length ? `Keys stay on the server. Missing: ${[...new Set(missing)].join(", ")}. Edit .env and restart to enable these providers.` :
+      "Configured keys stay on the server. Account access and model support are checked when a request is made.";
+  }
+  query("#player-mode").addEventListener("change", updateModels);
+  for (const kind of ["decision", "vision"]) providerControl(kind).addEventListener("change", () => {
+    if (!providers) return;
+    const input = query(`#${kind}-model`);
+    modelDrafts[`${kind}:${activeProviders[kind]}`] = input.value;
+    activeProviders[kind] = providerControl(kind).value;
+    input.value = modelDrafts[`${kind}:${activeProviders[kind]}`] ?? "";
+    updateModels();
+  });
+
+  function fillModels(result) {
+    providers = result.providers; modelDrafts = {};
+    for (const [kind, choices] of [["decision", providers.decisions], ["vision", providers.vision]]) {
+      const select = providerControl(kind);
+      select.replaceChildren();
+      for (const provider of choices) {
+        const option = document.createElement("option");
+        option.value = provider.id;
+        option.textContent = `${provider.name}${provider.available ? "" : " (key missing)"}`;
+        option.disabled = !provider.available;
+        select.append(option);
+        modelDrafts[`${kind}:${provider.id}`] = provider.model;
+      }
+      const selected = result.selection[kind === "decision" ? "decisionProvider" : "visionProvider"];
+      select.value = selected; activeProviders[kind] = selected;
+      query(`#${kind}-model`).value = result.selection[kind === "decision" ? "decisionModel" : "visionModel"];
+    }
+    query("#player-mode").value = result.selection.mode;
+    updateModels();
+  }
 
   function updateLimitInputs() {
     for (const [, selector] of limits) query(selector).disabled = unlimited.checked;
@@ -43,10 +92,15 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
     const current = generation;
     loading = true; fields.disabled = true; apply.disabled = true; reload.disabled = true;
     try {
-      const result = await request("/api/agent-settings");
+      const player = await request("/api/player-settings");
+      const result = player.enabled ? player : await request("/api/agent-settings");
       if (current !== generation) return;
+      playerEnabled = Boolean(player.enabled);
+      query('#agent-settings-section option[value="models"]').hidden = !playerEnabled;
+      if (playerEnabled) fillModels(result);
+      else if (query("#agent-settings-section").value === "models") setSection("objectives");
       gameId = result.gameId ?? 0;
-      const settings = result.settings;
+      const settings = result.settings ?? { ...result.defaults, objectives: { goal: "", constraints: [], milestones: [] } };
       revision = result.revision;
       query("#agent-goal-input").value = settings.objectives.goal;
       query("#agent-constraints-input").value = settings.objectives.constraints.join("\n");
@@ -89,21 +143,24 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
     const current = generation;
     try {
       const goal = query("#agent-goal-input").value.trim();
-      if (!goal || goal.length > 2000) invalid("#agent-goal-input", "objectives", "Enter an objective of at most 2,000 characters.");
+      const selection = playerEnabled ? { mode: query("#player-mode").value, decisionProvider: query("#decision-provider").value,
+        visionProvider: query("#vision-provider-select").value, decisionModel: query("#decision-model").value.trim(), visionModel: query("#vision-model").value.trim() } : null;
+      if ((!goal && selection?.mode !== "manual") || goal.length > 2000) invalid("#agent-goal-input", "objectives", "Enter an objective of at most 2,000 characters before enabling the agent.");
       const settings = { objectives: { goal, constraints: list("#agent-constraints-input", "Constraints"), milestones: list("#agent-milestones-input", "Milestones") },
         actionFrames: number("#agent-action-frames", 600, false),
         ...Object.fromEntries(limits.map(([name, selector, , maximum]) => [name, number(selector, maximum)])) };
       apply.disabled = true; reload.disabled = true; fields.disabled = true; loading = true;
-      const status = await request("/api/agent-settings", { revision, settings, gameId });
+      const status = await request(playerEnabled ? "/api/player-settings" : "/api/agent-settings", { revision, settings, gameId, ...(selection ? { selection } : {}) });
       if (current !== generation) return;
-      onApply(status); revision = status.agent.settingsRevision; dirty = false;
-      message(status.agent.state === "stopped" ? "Settings applied. Increase or disable the reached limit to continue." : "Agent settings applied. Session paused; resume when ready.");
+      onApply(status);
+      if (current === generation) { revision = playerEnabled ? status.playerRevision : status.agent.settingsRevision; dirty = false; }
+      message(status.agent?.state === "stopped" ? "Settings applied. Increase or disable the reached limit to continue." : "Settings applied. Game paused; resume when ready.");
     } catch (error) { if (current === generation) message(error.message, true); }
     finally { if (current === generation) { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; } }
   });
   return { reset() {
     generation++; revision = null; gameId = 0; dirty = false; loading = false;
-    fields.disabled = true; apply.disabled = true; reload.disabled = false; form.reset();
+    fields.disabled = true; apply.disabled = true; reload.disabled = false; form.reset(); setSection("models");
     if (!query("#settings-agent").hidden) void load();
   } };
 }

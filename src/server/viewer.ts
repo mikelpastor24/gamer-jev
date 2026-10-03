@@ -6,7 +6,7 @@ import type { Emulator } from "../core/emulator.js";
 import { hasAudio, validateAction } from "../core/emulator.js";
 import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
 import type { AgentSession } from "../runner/agent-session.js";
-import type { AgentSettings, GameStateProvider } from "../core/agent.js";
+import type { AgentSettings, GameStateProvider, PlayerSelection } from "../core/agent.js";
 import type { GameRuntime } from "../runner/game-runtime.js";
 import { createEmulatorStateProvider } from "../observation/state.js";
 import { parseEmulationSpeed } from "../config/emulation.js";
@@ -23,8 +23,10 @@ export interface ViewerOptions {
   readonly gameState?: GameStateProvider;
   readonly record?: (event: unknown) => void;
   readonly romLibrary?: LocalRomLibrary;
-  readonly loadRom?: (rom: Uint8Array, settings?: AgentSettings) => Promise<GameRuntime>;
+  readonly loadRom?: (rom: Uint8Array, settings?: AgentSettings, selection?: PlayerSelection) => Promise<GameRuntime>;
   readonly dispose?: () => void;
+  readonly runtime?: GameRuntime;
+  readonly launcher?: boolean;
 }
 
 export interface Viewer {
@@ -53,11 +55,11 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   let clock = new FrameClock(emulator.descriptor.framesPerSecond);
   let failure: string | null = null;
   let audioEpoch = 0;
-  let agent = options.agent;
-  let gameState = options.gameState ?? createEmulatorStateProvider(emulator, 24);
-  let record = options.record;
+  let agent = options.runtime?.agent ?? options.agent;
+  let gameState = options.runtime?.gameState ?? options.gameState ?? createEmulatorStateProvider(emulator, 24);
+  let record = options.runtime?.record ?? options.record;
   const initialEmulator = emulator;
-  let game: GameRuntime = { emulator, gameState, ...(agent ? { agent } : {}), ...(record ? { record } : {}),
+  let game: GameRuntime = options.runtime ?? { emulator, gameState, ...(agent ? { agent } : {}), ...(record ? { record } : {}),
     dispose: options.dispose ?? (() => { options.agent?.stop("Session closed."); initialEmulator.dispose(); }) };
   let checkpointPath = options.checkpointPath;
   const romLibrary = options.romLibrary ?? new LocalRomLibrary("roms");
@@ -90,6 +92,9 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     gameId,
     loadingRom,
     romLibraryEnabled: options.loadRom !== undefined,
+    playerConfigurable: game.player !== undefined,
+    playerRevision: game.player?.configuration.revision ?? null,
+    launcher: Boolean(options.launcher && gameId === 0),
   });
   const json = (response: ServerResponse, value: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json" });
@@ -105,7 +110,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     loadingRom = true; pause();
     let candidate: GameRuntime | undefined;
     try {
-      candidate = await options.loadRom(await romLibrary.read(id), agent?.copySettings());
+      candidate = await options.loadRom(await romLibrary.read(id), game.player?.copySettings() ?? agent?.copySettings(), game.player?.copySelection());
       candidate.agent?.pause();
       candidate.gameState.read(candidate.emulator.captureFrame());
       if (closing) throw new Error("The viewer is closing.");
@@ -173,6 +178,8 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       } else if (path === "/api/agent-settings") {
         if (!agent) json(response, { error: "Agent settings are unavailable during manual play." }, 400);
         else json(response, { ...agent.configuration, ...(gameId ? { gameId } : {}) });
+      } else if (path === "/api/player-settings") {
+        json(response, game.player ? { ...game.player.configuration, gameId } : { enabled: false });
       } else if (path === "/api/audio" && hasAudio(emulator)) {
         const audio = emulator.drainAudio();
         const data = Buffer.allocUnsafe(audioPaused() ? 0 : audio.samples.byteLength);
@@ -208,7 +215,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     let size = 0;
     for await (const chunk of request) {
       size += chunk.length;
-      const maximum = path === "/api/agent-settings" ? 32_768 : 4096;
+      const maximum = path === "/api/agent-settings" || path === "/api/player-settings" ? 32_768 : 4096;
       if (size > maximum) throw new Error(`Viewer commands must be at most ${maximum} bytes.`);
       chunks.push(chunk as Buffer);
     }
@@ -226,6 +233,15 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       const data = body as Record<string, unknown>;
       if (Object.keys(data).some((key) => key !== "speed" && key !== "gameId")) throw new Error("Invalid emulation speed command.");
       setSpeed(data.speed);
+    } else if (path === "/api/player-settings") {
+      if (!game.player) throw new Error("Player selection is unavailable in this viewer.");
+      if (Object.keys(data).some((key) => !["selection", "settings", "revision", "gameId"].includes(key)) || data.gameId !== gameId) throw new Error("Invalid player settings command.");
+      const previous = game.player.copySelection();
+      game.player.configure(data.selection, data.settings, data.revision);
+      pause();
+      agent = game.agent; gameState = game.gameState; record = game.record;
+      agent?.pause(); failure = null; clock.reset();
+      if (JSON.stringify(previous) !== JSON.stringify(game.player.copySelection())) gameId++;
     } else if (path === "/api/agent-settings") {
       if (!agent) throw new Error("Agent settings are unavailable during manual play.");
       const data = body as Record<string, unknown>;
@@ -251,20 +267,20 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     } else if (path === "/api/step") {
       pause();
       emulator.advance({ buttons: [], frames: 1 });
-      agent?.clearHistory();
+      if (game.player) game.player.clearHistory(); else agent?.clearHistory();
     } else if (path === "/api/reset") {
       pause();
       emulator.reset();
-      agent?.clearHistory();
-      if (!agent) gameState.reset?.();
+      if (game.player) game.player.clearHistory();
+      else { agent?.clearHistory(); if (!agent) gameState.reset?.(); }
       failure = null;
     } else if (path === "/api/save") {
       await exclusive(() => saveStateFile(emulator, checkpointPath));
     } else if (path === "/api/load") {
       pause();
       await exclusive(() => loadStateFile(emulator, checkpointPath));
-      agent?.clearHistory();
-      if (!agent) gameState.reset?.();
+      if (game.player) game.player.clearHistory();
+      else { agent?.clearHistory(); if (!agent) gameState.reset?.(); }
       failure = null;
     } else {
       json(response, { error: "Not found." }, 404);

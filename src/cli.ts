@@ -26,7 +26,8 @@ async function main(): Promise<void> {
   }
   if (options.romPath && (await stat(options.romPath)).size > MAX_ROM_BYTES) throw new Error("ROM files must be at most 8 MiB.");
   const rom = options.demo ? createDemoRom() : await readFile(options.romPath!);
-  if ((options.agent && options.agent !== "mock" || options.visionProvider === "gateway") && existsSync(".env")) loadEnvFile(".env");
+  if (existsSync(".env")) loadEnvFile(".env");
+  const environment = { ...process.env };
   let runtime = await createGameRuntime(rom, options);
   const controller = new AbortController();
   const interrupt = () => controller.abort();
@@ -58,18 +59,18 @@ async function main(): Promise<void> {
     } else {
       const checkpointPath = options.savePath ?? join("saves", emulator.descriptor.consoleId, emulator.rom.sha256, "checkpoint.json");
       const viewer = await startViewer(emulator, {
-        port: options.port, speed: options.speed, paused: options.paused, checkpointPath,
+        port: options.port, speed: options.speed, paused: options.paused, checkpointPath, runtime, launcher: options.launcher,
         gameState: runtime.gameState, dispose: runtime.dispose,
         ...(runtime.record ? { record: runtime.record } : {}), ...(session ? { agent: session } : {}),
-        async loadRom(bytes, settings) {
-          const next = await createGameRuntime(bytes, options, settings, true);
+        async loadRom(bytes, settings, selection) {
+          const next = await createGameRuntime(bytes, options, settings, true, { ...(selection ? { selection } : {}), environment });
           if (next.logPath) console.log(`Prepared cartridge session record: ${next.logPath}`);
           return next;
         },
       });
       console.log(`Viewer: ${viewer.url}`);
       console.log(`Checkpoint: ${checkpointPath}`);
-      console.log("Load another local cartridge in Settings → ROMs. Press Ctrl+C to stop.");
+      console.log("Choose a cartridge in Settings → ROMs and manual or agent play in Settings → Agent. Press Ctrl+C to stop.");
       try {
         if (!controller.signal.aborted) await new Promise<void>((resolve) => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
       } finally {

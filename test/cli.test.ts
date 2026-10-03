@@ -12,8 +12,16 @@ test("CLI accepts local ROM paths with spaces and normalizes button names", () =
   assert.deepEqual(options.buttons, ["RIGHT", "A"]);
 });
 
+test("CLI starts a paused manual launcher without arguments and still supports explicit cartridges", () => {
+  const options = parseCliOptions([]);
+  assert.equal(options.launcher, true); assert.equal(options.demo, true); assert.equal(options.paused, true);
+  assert.equal(options.agent, undefined); assert.equal(options.visionProvider, "none");
+  assert.equal(parseCliOptions(["--rom", "game.gb"]).launcher, false);
+  assert.equal(parseCliOptions(["--demo"]).paused, false);
+});
+
 test("CLI rejects ambiguous sources, ignored options, and unbounded manual headless execution", () => {
-  for (const args of [[], ["--demo", "--rom", "rom.gb"], ["--demo", "--frames", "10"],
+  for (const args of [["--headless"], ["--rom", " "], ["--demo", "--rom", "rom.gb"], ["--demo", "--frames", "10"],
     ["--demo", "--headless", "--frames", "0"], ["--demo", "--speed", "Infinity"],
     ["--demo", "--port", "0"], ["--demo", "--headless", "--paused"], ["--demo", "--unknown"]]) {
     assert.throws(() => parseCliOptions(args));

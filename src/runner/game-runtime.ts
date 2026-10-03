@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Emulator } from "../core/emulator.js";
-import type { AgentSettings, GameStateProvider } from "../core/agent.js";
+import type { AgentSettings, GameStateProvider, PlayerSelection } from "../core/agent.js";
 import type { DiagnosticSink } from "../core/diagnostics.js";
 import type { CliOptions } from "../config/cli-options.js";
 import { loadObjectives, parseObjectives } from "../config/objectives.js";
@@ -19,19 +19,44 @@ import { redactLogEvent } from "../core/redaction.js";
 import { AgentSession } from "./agent-session.js";
 import { openSessionLog } from "./session-log.js";
 import { createDiagnosticLogger } from "./diagnostics.js";
+import { parseAgentSettings } from "../config/agent-settings.js";
+import { parsePlayerSelection, providerCatalog, validateProviderAccess } from "../config/player-settings.js";
+import type { ProviderEnvironment } from "../config/player-settings.js";
+
+export interface PlayerControl {
+  readonly configuration: {
+    readonly enabled: true;
+    readonly revision: number;
+    readonly selection: PlayerSelection;
+    readonly settings: AgentSettings | null;
+    readonly defaults: Omit<AgentSettings, "objectives">;
+    readonly providers: ReturnType<typeof providerCatalog>;
+  };
+  configure(selection: unknown, settings: unknown, revision: unknown): void;
+  copySettings(): AgentSettings | undefined;
+  copySelection(): PlayerSelection;
+  clearHistory(): void;
+}
+
+export interface RuntimeProviders {
+  readonly selection?: PlayerSelection;
+  readonly environment?: ProviderEnvironment;
+  readonly fetch?: typeof globalThis.fetch;
+}
 
 export interface GameRuntime {
   readonly emulator: Emulator;
   readonly gameState: GameStateProvider;
-  readonly agent?: AgentSession;
-  readonly record?: (event: unknown) => void;
-  readonly logPath?: string;
+  readonly agent?: AgentSession | undefined;
+  readonly record?: ((event: unknown) => void) | undefined;
+  readonly logPath?: string | undefined;
+  readonly player?: PlayerControl;
   dispose(): void;
 }
 
 /** Build and validate a fresh cartridge session before replacing a working viewer. */
 export async function createGameRuntime(rom: Uint8Array, options: CliOptions,
-  settings?: AgentSettings, switching = false): Promise<GameRuntime> {
+  settings?: AgentSettings, switching = false, providerOptions: RuntimeProviders = {}): Promise<GameRuntime> {
   const emulator = await createDefaultRegistry().create(options.consoleId, rom);
   let agent: AgentSession | undefined;
   let log: ReturnType<typeof openSessionLog> | undefined;
@@ -42,14 +67,29 @@ export async function createGameRuntime(rom: Uint8Array, options: CliOptions,
   };
   try {
     if (!switching && options.loadPath) await loadStateFile(emulator, options.loadPath);
-    let diagnostics: DiagnosticSink | undefined;
-    const secrets = [process.env.TYPESAFE_API_KEY, process.env.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
+    const environment = { ...(providerOptions.environment ?? process.env) };
+    const secrets = [environment.TYPESAFE_API_KEY, environment.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
+    const safe = <T>(value: T): T => redactLogEvent(value, secrets) as T;
+    const catalog = providerCatalog(environment);
+    const preferred = options.agent ?? (catalog.decisions.find((provider) => provider.available)?.id ?? "mock");
+    let selection: PlayerSelection = providerOptions.selection ?? {
+      mode: options.agent ? "agent" : "manual", decisionProvider: preferred as PlayerSelection["decisionProvider"],
+      visionProvider: options.visionProvider,
+      decisionModel: catalog.decisions.find((provider) => provider.id === preferred)!.model,
+      visionModel: options.visionProvider === "gateway" ? catalog.vision.find((provider) => provider.id === "gateway")!.model : "",
+    };
+    let savedSettings = settings ? parseAgentSettings(settings, selection.mode === "manual") : undefined;
+    let playerRevision = 0;
+    let logger: DiagnosticSink | undefined;
+    const diagnostics: DiagnosticSink = (event) => logger?.(event);
     let logPath: string | undefined;
-    if (options.agent || options.debug) {
+    const ensureLog = () => {
+      if (log) return;
       logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
       log = openSessionLog(logPath, { secrets, onLimit: () => console.error("Local session log reached 32 MiB. Further file events are omitted; gameplay continues.") });
-      diagnostics = createDiagnosticLogger(log.record, { verbose: options.debug, secrets });
-    }
+      logger = createDiagnosticLogger(log.record, { verbose: options.debug, secrets });
+    };
+    if (selection.mode === "agent" || options.debug) ensureLog();
     const actionFrames = settings?.actionFrames ?? options.actionFrames;
     const readers = createDefaultGameReaderRegistry();
     let gameState: GameStateProvider | undefined;
@@ -68,23 +108,73 @@ export async function createGameRuntime(rom: Uint8Array, options: CliOptions,
     if (!semanticState) diagnostics?.({ component: "game-reader", level: "info", event: "metadata-only", frame: emulator.frameNumber,
       data: { console: emulator.descriptor.consoleId, romSha256: emulator.rom.sha256 } });
     gameState.read(emulator.captureFrame());
-    if (options.agent) {
-      if (options.observationMode === "state" && !semanticState) throw new Error("Memory-only agent mode requires a compatible game reader. Supply --profile <id/path>, or use --vision gateway.");
-      const objectives = settings?.objectives ?? (options.objectivesPath ? await loadObjectives(options.objectivesPath) : parseObjectives({ goal: options.goal }));
-      const budget = new RequestBudget({ maxRequests: settings ? settings.maxRequests : options.requests,
-        timeoutMs: 20_000, intervalMs: 250, retries: 1 }, diagnostics);
-      const providers = { environment: process.env, budget, ...(diagnostics ? { diagnostics } : {}) };
-      const vision = createVisionProvider(options.visionProvider, providers);
+    const budget = new RequestBudget({ maxRequests: savedSettings ? savedSettings.maxRequests : options.requests,
+      timeoutMs: 20_000, intervalMs: 250, retries: 1 }, diagnostics);
+    const prepareProviders = (next: PlayerSelection) => {
+      validateProviderAccess(next, environment);
+      if (next.visionProvider === "none" && !semanticState) throw new Error("Memory-only agent mode requires a compatible game reader. Supply --profile <id/path>, or enable vision in Settings.");
+      const providers = { environment: { ...environment,
+        ...(next.decisionProvider === "typesafe" ? { TYPESAFE_MODEL: next.decisionModel } : { JEV_MODEL: next.decisionModel }),
+        VISION_MODEL: next.visionModel }, budget, diagnostics, ...(providerOptions.fetch ? { fetch: providerOptions.fetch } : {}) };
+      const vision = createVisionProvider(next.visionProvider, providers);
       const stateObserver = createStateObserver(gameState);
-      agent = new AgentSession(emulator, { observer: vision ? withVision(stateObserver, vision) : stateObserver,
-        decider: createDecisionProvider(options.agent, providers), budget, mode: options.agent, visionProvider: options.visionProvider,
-        objectives, actionFrames, maxDecisions: settings ? settings.maxDecisions : options.decisions,
-        maxSeconds: settings ? settings.maxSeconds : options.maxSeconds,
-        record: log!.record, ...(diagnostics ? { diagnostics } : {}),
-        redactInspection: (value) => redactLogEvent(value, secrets),
+      return { observer: vision ? withVision(stateObserver, vision) : stateObserver,
+        decider: createDecisionProvider(next.decisionProvider, providers), mode: next.decisionProvider, visionProvider: next.visionProvider };
+    };
+    const startAgent = (next: AgentSettings, providers: ReturnType<typeof prepareProviders>) => {
+      ensureLog();
+      gameState.reset?.();
+      budget.setMaxRequests(next.maxRequests);
+      return new AgentSession(emulator, { ...providers, budget, objectives: next.objectives, actionFrames: next.actionFrames,
+        maxDecisions: next.maxDecisions, maxSeconds: next.maxSeconds, record: log!.record, diagnostics,
+        redactInspection: (value) => safe(value),
       });
+    };
+    if (selection.mode === "agent") {
+      savedSettings ??= parseAgentSettings({
+        objectives: options.objectivesPath ? await loadObjectives(options.objectivesPath) : parseObjectives({ goal: options.goal }),
+        actionFrames, maxDecisions: options.decisions, maxRequests: options.requests, maxSeconds: options.maxSeconds,
+      });
+      agent = startAgent(savedSettings, prepareProviders(selection));
     }
-    return { emulator, gameState, ...(agent ? { agent } : {}), ...(log ? { record: log.record } : {}),
-      ...(logPath ? { logPath } : {}), dispose };
+    const player: PlayerControl = {
+      get configuration() {
+        return safe({ enabled: true as const, revision: playerRevision + (agent?.configuration.revision ?? 0), selection,
+          settings: player.copySettings() ?? null,
+          defaults: { actionFrames: options.actionFrames, maxDecisions: options.decisions, maxRequests: options.requests, maxSeconds: options.maxSeconds },
+          providers: catalog });
+      },
+      copySettings: () => selection.mode === "manual" && savedSettings ? structuredClone(savedSettings) :
+        agent?.copySettings() ?? (savedSettings ? structuredClone(savedSettings) : undefined),
+      copySelection: () => ({ ...selection }),
+      clearHistory() { if (agent) agent.clearHistory(); else gameState.reset?.(); },
+      configure(value, valueSettings, revision) {
+        if (disposed) throw new Error("The game session is closed.");
+        if (revision !== playerRevision + (agent?.configuration.revision ?? 0)) throw new Error("Player settings changed in another window. Reload settings and try again.");
+        const nextSelection = parsePlayerSelection(value);
+        const suppliedSettings = valueSettings === null ? player.copySettings() : valueSettings;
+        const nextSettings = suppliedSettings === undefined ? undefined : parseAgentSettings(suppliedSettings, nextSelection.mode === "manual");
+        if (nextSelection.mode === "agent" && !nextSettings) throw new Error("Set an objective in Settings before enabling the agent.");
+        const providers = nextSelection.mode === "agent" ? prepareProviders(nextSelection) : undefined;
+        const changed = JSON.stringify(selection) !== JSON.stringify(nextSelection);
+        // Everything above is read-only validation. Cancel work only after the update is accepted.
+        if (agent) {
+          const agentSettings = nextSelection.mode === "manual" && !nextSettings!.objectives.goal ?
+            { ...nextSettings!, objectives: agent.copySettings().objectives } : nextSettings!;
+          agent.updateSettings(agentSettings, agent.configuration.revision);
+          if (providers && changed) agent.setProviders(providers);
+          else if (changed) agent.clearHistory();
+        } else {
+          if (providers) { agent = startAgent(nextSettings!, providers); agent.pause(); }
+          else if (nextSettings) gameState.setActionFrames?.(nextSettings.actionFrames);
+          playerRevision++;
+        }
+        savedSettings = nextSettings; selection = nextSelection;
+        log?.record({ type: "player-settings", selection, frame: emulator.frameNumber,
+          decisions: agent?.snapshot.decisions ?? 0, requests: budget.requests });
+      },
+    };
+    return { emulator, gameState, get agent() { return selection.mode === "agent" ? agent : undefined; },
+      get record() { return log?.record; }, get logPath() { return logPath; }, player, dispose };
   } catch (error) { dispose(); throw error; }
 }
