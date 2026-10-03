@@ -211,6 +211,11 @@ next request uses the new objective and action set. Profiles can still choose
 their own bounded action durations. Changes are recorded in the local JSONL log;
 the objectives file and browser storage are not rewritten.
 
+The **?** beside each setting explains its behavior. Hover, focus the help button
+with the keyboard, or tap it to read the tooltip. Press Escape or tap elsewhere
+to dismiss it. Agent help describes shared request counts, elapsed time during
+pauses, action durations, and the difference between guidance and verified progress.
+
 For a session without decision, request, or time ceilings from startup:
 
 ```sh

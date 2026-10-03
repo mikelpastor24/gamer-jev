@@ -28,6 +28,7 @@ test("the local viewer exposes frames, controls, screenshots, and compatible che
     assert.equal((await fetch(`${viewer.url}/viewer.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/audio.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/inspector.js`)).status, 200);
+    assert.equal((await fetch(`${viewer.url}/settings-help.js`)).status, 200);
     assert.equal((await fetch(`${viewer.url}/style.css`)).status, 200);
     assert.deepEqual(await (await fetch(`${viewer.url}/api/jev-exchange`)).json(), { revision: 0, exchange: null });
     const before = await fetch(`${viewer.url}/api/frame`);

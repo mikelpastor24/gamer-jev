@@ -79,7 +79,7 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
     if (!input.validity.badInput && !input.value.trim() && nullable) return null;
     const value = Number(input.value);
     if (input.validity.badInput || !Number.isSafeInteger(value) || value < 1 || value > maximum) {
-      invalid(selector, "limits", `${input.previousSibling?.textContent?.trim() || "Value"} must be an integer between 1 and ${maximum}.`);
+      invalid(selector, "limits", `${input.labels[0]?.textContent.trim() || "Value"} must be an integer between 1 and ${maximum}.`);
     }
     return value;
   }

@@ -87,38 +87,38 @@
       <section id="settings-view" class="settings-body" role="tabpanel" aria-labelledby="view-tab">
         <h3>Visible panels</h3>
         <div class="visibility-options">
-          <label data-agent-only hidden><input type="checkbox" data-visibility="agent" checked> Agent overview</label>
-          <label><input type="checkbox" data-visibility="state" checked> Game state</label>
-          <label data-agent-only hidden><input type="checkbox" data-visibility="observation" checked> Jev exchange</label>
-          <label><input type="checkbox" data-visibility="actions" checked> Available actions</label>
+          <div class="setting-heading" data-agent-only hidden><label data-help="Show the objective, providers, decision counts, selected input, and session stop reason. Hiding this panel does not pause the agent."><input type="checkbox" data-visibility="agent" checked> Agent overview</label></div>
+          <div class="setting-heading"><label data-help="Show the state decoded by the current game reader. Use Fields in the panel to choose which values you see; Jev still receives the full observation."><input type="checkbox" data-visibility="state" checked> Game state</label></div>
+          <div class="setting-heading" data-agent-only hidden><label data-help="Inspect the information sent to Jev and its matching response. Viewing an exchange makes no additional model requests."><input type="checkbox" data-visibility="observation" checked> Jev exchange</label></div>
+          <div class="setting-heading"><label data-help="Show the actions currently offered by the game reader. Jev can select only from this set; hiding the panel does not change those choices."><input type="checkbox" data-visibility="actions" checked> Available actions</label></div>
         </div>
         <h3>Game display</h3>
         <div class="visibility-options">
-          <label><input type="checkbox" id="show-controller" checked> Controller buttons</label>
-          <label><input type="checkbox" id="focus-game"> Game only</label>
+          <div class="setting-heading"><label data-help="Show the on-screen controller for manual play. In an agent session, controller input is managed by Jev."><input type="checkbox" id="show-controller" checked> Controller buttons</label></div>
+          <div class="setting-heading"><label data-help="Give the game screen the full workspace and hide the inspection panels. Turn this off to return to your selected panel layout."><input type="checkbox" id="focus-game"> Game only</label></div>
         </div>
         <p class="settings-hint">Use Fields in the game state card to choose individual values. These choices only affect your view.</p>
-        <button id="reset-layout" class="quiet" type="button">Reset layout &amp; fields</button>
+        <div class="setting-action"><button id="reset-layout" class="quiet" type="button" data-help="Restore default panel visibility and game-state field choices in this browser. The game and agent session continue unchanged.">Reset layout &amp; fields</button></div>
       </section>
       <section id="settings-session" class="settings-body" role="tabpanel" aria-labelledby="session-tab" hidden>
         <h3>Sound</h3>
         <div class="audio-controls">
-          <button id="sound" type="button" aria-pressed="false" disabled>Enable sound</button>
-          <label for="volume">Volume <output id="volume-value">35%</output></label>
+          <div class="setting-action"><button id="sound" type="button" aria-pressed="false" disabled data-help="Enable or mute the emulator's audio in this browser. Playback is cleared when the game pauses or the tab is hidden.">Enable sound</button></div>
+          <div class="setting-heading"><label for="volume" data-help="Adjust playback volume from 0% to 100%. This only changes the sound you hear, not the game or Jev's observations." data-help-name="Volume">Volume <output id="volume-value">35%</output></label></div>
           <input id="volume" type="range" min="0" max="100" value="35" aria-label="Game audio volume">
         </div>
         <h3>Checkpoint</h3>
-        <div class="settings-actions"><button id="save" type="button">Save checkpoint</button><button id="load" type="button">Restore checkpoint</button></div>
+        <div class="settings-actions"><div class="setting-action"><button id="save" type="button" data-help="Save the current emulator state locally for this cartridge. A checkpoint does not save agent objectives, history, counters, or request budgets.">Save checkpoint</button></div><div class="setting-action"><button id="load" type="button" data-help="Restore a compatible checkpoint for this cartridge and pause the session. Pending work and recent history are cleared; agent counters and elapsed time are retained.">Restore checkpoint</button></div></div>
         <h3>Emulation</h3>
-        <label class="speed-control" for="emulation-speed">Speed <select id="emulation-speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option><option value="32">32×</option></select></label>
-        <div class="settings-actions"><button id="step" type="button">Step one frame</button><button id="reset" class="quiet" type="button">Reset cartridge</button></div>
+        <div class="speed-control"><div class="setting-heading"><label for="emulation-speed" data-help="Change emulation speed immediately, from 0.25× to 32×. Higher speeds depend on your computer and do not shorten model response times or change how many frames an action lasts.">Speed</label></div><select id="emulation-speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option><option value="32">32×</option></select></div>
+        <div class="settings-actions"><div class="setting-action"><button id="step" type="button" data-help="Pause and advance the emulator by one frame with no buttons held. This clears recent agent history and does not ask Jev for a decision.">Step one frame</button></div><div class="setting-action"><button id="reset" class="quiet" type="button" data-help="Restart the current cartridge from its initial state and pause. Pending work and recent history are cleared; agent counters, objectives, and elapsed time are retained.">Reset cartridge</button></div></div>
       </section>
       <section id="settings-roms" class="settings-body" role="tabpanel" aria-labelledby="roms-tab" hidden>
         <h3>Local games</h3>
         <form id="rom-library-form">
-          <label class="rom-choice" for="rom-choice">ROM<select id="rom-choice" disabled><option value="">Loading library…</option></select></label>
+          <div class="rom-choice"><div class="setting-heading"><label for="rom-choice" data-help="Choose a local .gb or .gbc file from the roms/ folder. Selection alone does not switch games; use Load selected ROM. Reader compatibility is checked against the exact ROM hash.">ROM</label></div><select id="rom-choice" disabled><option value="">Loading library…</option></select></div>
           <p id="rom-library-summary" class="settings-hint" role="status">Game Boy cartridges in roms/ are available here.</p>
-          <button id="load-rom" class="primary" type="submit" disabled>Load selected ROM</button>
+          <div class="setting-action"><button id="load-rom" class="primary" type="submit" disabled data-help="Save the current game's checkpoint, then load the selected cartridge paused. Applied agent settings and providers are kept; counters, elapsed time, history, and inspection start fresh.">Load selected ROM</button></div>
         </form>
         <p class="settings-hint">Loading saves a checkpoint of the current game and starts the selected cartridge paused. Use Resume to play, or Restore checkpoint to continue a saved game.</p>
         <p class="settings-hint" data-agent-only hidden>Applied objectives, constraints, providers, and limits are kept. Each loaded game starts a new agent session with fresh counters and history.</p>
@@ -126,26 +126,26 @@
       <section id="settings-agent" class="settings-body" role="tabpanel" aria-labelledby="agent-tab" hidden>
         <form id="agent-settings-form" novalidate>
           <fieldset id="agent-settings-fields" disabled>
-            <label class="agent-section-choice" for="agent-settings-section">Edit <select id="agent-settings-section"><option value="objectives">Objectives</option><option value="limits">Limits</option></select></label>
+            <div class="agent-section-choice"><div class="setting-heading"><label for="agent-settings-section" data-help="Switch between objectives and session limits. Your drafts are kept while switching; Apply changes saves both sections together.">Edit</label></div><select id="agent-settings-section"><option value="objectives">Objectives</option><option value="limits">Limits</option></select></div>
             <div id="agent-objectives" class="agent-settings-fields">
-              <label for="agent-goal-input">Objective<textarea id="agent-goal-input" rows="2" maxlength="2000" required></textarea></label>
-              <label for="agent-constraints-input">Constraints<textarea id="agent-constraints-input" rows="3" maxlength="8015" placeholder="One constraint per line"></textarea></label>
-              <label for="agent-milestones-input">Milestones <span class="optional">Optional</span><textarea id="agent-milestones-input" rows="2" maxlength="8015" placeholder="One milestone per line"></textarea></label>
+              <div><div class="setting-heading"><label for="agent-goal-input" data-help="The main goal sent to Jev with every decision, such as reach the next checkpoint. Required; up to 2,000 characters. A stated goal is not proof that the game has been completed.">Objective</label></div><textarea id="agent-goal-input" rows="2" maxlength="2000" required></textarea></div>
+              <div><div class="setting-heading"><label for="agent-constraints-input" data-help="Optional instructions that guide Jev, such as avoid using limited items. Enter one per line, up to 16 lines of 500 characters each. These are model instructions, not guaranteed restrictions enforced by the emulator.">Constraints</label></div><textarea id="agent-constraints-input" rows="3" maxlength="8015" placeholder="One constraint per line"></textarea></div>
+              <div><div class="setting-heading"><label for="agent-milestones-input" data-help="Optional intermediate goals sent to Jev alongside the main objective. Enter one per line, up to 16 lines of 500 characters each. Milestones are guidance; they are not automatically checked off.">Milestones</label><span class="optional">Optional</span></div><textarea id="agent-milestones-input" rows="2" maxlength="8015" placeholder="One milestone per line"></textarea></div>
             </div>
             <div id="agent-limits" class="agent-settings-fields" hidden>
-              <label class="unlimited-choice"><input id="agent-unlimited" type="checkbox"> No session limits</label>
+              <div class="setting-heading unlimited-choice"><label data-help="Disable the decision, model-request, and elapsed-time ceilings together. Action durations and request timeouts stay bounded. Jev can still stop, and provider errors can still end the session."><input id="agent-unlimited" type="checkbox"> No session limits</label></div>
               <div class="agent-limit-grid">
-                <label for="agent-limit-decisions">Decisions<input id="agent-limit-decisions" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></label>
-                <label for="agent-limit-requests">Model requests<input id="agent-limit-requests" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></label>
-                <label for="agent-limit-seconds">Session seconds<input id="agent-limit-seconds" type="number" min="1" max="86400" step="1" placeholder="Unlimited"></label>
-                <label for="agent-action-frames">Action frames<input id="agent-action-frames" type="number" min="1" max="600" step="1" required></label>
+                <div><div class="setting-heading"><label for="agent-limit-decisions" data-help="Stop after this many validated Jev decisions in the current session. Use 1–10,000, or leave blank for unlimited. Applying changes does not reset the count; increase an already reached limit to continue.">Decisions</label></div><input id="agent-limit-decisions" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></div>
+                <div><div class="setting-heading"><label for="agent-limit-requests" data-help="Cap total HTTP attempts shared by Jev and vision. Retries, failures, and cancelled requests count; offline mock calls do not. Use 1–10,000, or leave blank for unlimited. This is a request limit, not a spending limit.">Model requests</label></div><input id="agent-limit-requests" type="number" min="1" max="10000" step="1" placeholder="Unlimited"></div>
+                <div><div class="setting-heading"><label for="agent-limit-seconds" data-help="Stop after this many real seconds since the session started, including pauses and model waits. Use 1–86,400, or leave blank for unlimited. Applying changes does not restart the timer.">Session seconds</label></div><input id="agent-limit-seconds" type="number" min="1" max="86400" step="1" placeholder="Unlimited"></div>
+                <div><div class="setting-heading"><label for="agent-action-frames" data-help="Set the default duration of an input or wait, from 1 to 600 emulated frames. At 1×, 60 frames is about one second on Game Boy. Held inputs add 4 release frames. Game readers can provide their own bounded durations; this does not change emulation speed.">Action frames</label></div><input id="agent-action-frames" type="number" min="1" max="600" step="1" required></div>
               </div>
               <p class="agent-settings-hint">Blank disables a limit. Limits apply to total counts and elapsed time, including pauses. Actions remain bounded.</p>
               <p class="agent-settings-hint">Jev can choose to stop. Game completion remains unverified.</p>
             </div>
           </fieldset>
           <p class="agent-settings-hint">Applying changes pauses the agent. Resume when ready.</p>
-          <div class="settings-actions"><button id="apply-agent-settings" class="primary" type="submit" disabled>Apply changes</button><button id="reload-agent-settings" class="quiet" type="button">Reload settings</button></div>
+          <div class="settings-actions"><div class="setting-action"><button id="apply-agent-settings" class="primary" type="submit" disabled data-help="Validate and apply both sections together, then pause the agent and cancel pending work. Counters, elapsed time, and game state are retained. Close Settings and Resume when ready.">Apply changes</button></div><div class="setting-action"><button id="reload-agent-settings" class="quiet" type="button" data-help="Discard unapplied drafts and reload the currently applied agent settings. This does not reset the game, counters, or elapsed time.">Reload settings</button></div></div>
         </form>
       </section>
       <p id="settings-message" role="status" aria-live="polite" hidden></p>

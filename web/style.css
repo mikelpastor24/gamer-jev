@@ -106,7 +106,7 @@ dialog::backdrop { background: #1a2c2560; backdrop-filter: blur(3px); }
 #detail-description { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 14px 20px 0; flex-shrink: 0; }
 .detail-content { flex: 1; min-height: 0; margin: 14px 20px; overflow: hidden; }
 #settings-dialog { width: min(560px, calc(100vw - 24px)); height: min(490px, calc(100dvh - 32px)); }
-#settings-dialog:has(#settings-agent:not([hidden]), #settings-session:not([hidden])) { height: min(550px, calc(100dvh - 32px)); }
+#settings-dialog:has(#settings-agent:not([hidden]), #settings-session:not([hidden]), #settings-roms:not([hidden])) { height: min(550px, calc(100dvh - 32px)); }
 .settings-tabs { display: flex; padding: 10px 20px 0; gap: 6px; }
 .settings-tabs button { flex: 1; border: 0; background: transparent; color: var(--muted); }
 .settings-tabs button[aria-selected="true"] { background: #e8eee4; color: var(--green); }
@@ -138,7 +138,16 @@ dialog::backdrop { background: #1a2c2560; backdrop-filter: blur(3px); }
 .agent-settings-fields .unlimited-choice { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: var(--ink); }
 .agent-settings-hint { margin: 10px 0; font-size: 10px; line-height: 1.5; color: var(--muted); }
 #agent-limits .agent-settings-hint { margin: 0; }
-.optional { float: right; font-size: 10px; }
+.optional { margin-left: auto; font-size: 10px; }
+.setting-heading, .setting-action { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.setting-heading > label { min-width: 0; }
+.setting-action > button:first-child { flex: 1; min-width: 0; }
+#reset-layout, #load-rom { flex: 0 1 auto; }
+.agent-settings-fields .unlimited-choice label { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+button.settings-help { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+button.settings-help:hover, button.settings-help:focus-visible { color: var(--green); background: #e8eee4; }
+.settings-help span { display: flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; font-weight: 600; }
+.settings-tooltip { position: fixed; z-index: 1; width: min(310px, calc(100vw - 24px)); padding: 10px 12px; border-radius: 8px; color: #fff; background: var(--ink); box-shadow: 0 4px 16px #1a2c2530; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 
 @media (max-height: 760px) and (min-width: 901px) {
   main { padding-top: 12px; gap: 10px; }

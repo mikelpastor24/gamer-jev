@@ -37,7 +37,7 @@ export interface Viewer {
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
   let speed = parseEmulationSpeed(options.speed);
-  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript, settingsHelpJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
@@ -45,6 +45,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     readFile(new URL("../../web/inspector.js", import.meta.url)),
     readFile(new URL("../../web/agent-settings.js", import.meta.url)),
     readFile(new URL("../../web/rom-library.js", import.meta.url)),
+    readFile(new URL("../../web/settings-help.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
@@ -151,6 +152,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/inspector.js": [inspectorJavascript, "text/javascript; charset=utf-8"],
         "/agent-settings.js": [agentSettingsJavascript, "text/javascript; charset=utf-8"],
         "/rom-library.js": [romLibraryJavascript, "text/javascript; charset=utf-8"],
+        "/settings-help.js": [settingsHelpJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];

@@ -2,6 +2,7 @@ import { AudioPlayer } from "./audio.js";
 import { createInspector } from "./inspector.js";
 import { createAgentSettingsEditor } from "./agent-settings.js";
 import { createRomLibrary } from "./rom-library.js";
+import { createSettingsHelp } from "./settings-help.js";
 
 const canvas = document.querySelector("#screen");
 const context = canvas.getContext("2d");
@@ -24,6 +25,7 @@ const speedControl = document.querySelector("#emulation-speed");
 const inspector = createInspector((visible) => { if (!visible) clearInput(); });
 const agentSettings = createAgentSettingsEditor({ request, message, onApply(status) { clearInput(); audio.reset(); renderStatus(status); } });
 createRomLibrary({ request, message, onLoad(status) { renderStatus(status); } });
+createSettingsHelp();
 
 function message(text, error = false) {
   const element = document.querySelector("#message");
