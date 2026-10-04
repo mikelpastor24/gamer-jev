@@ -16,6 +16,7 @@ import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { RequestBudget } from "../src/providers/requests.js";
 import { RED_BLUE_NAVIGATION, YELLOW_NAVIGATION } from "../src/profiles/pokemon/navigation-layout.js";
+import { cartridge, forestJourney } from "./fixtures/pokemon-world.js";
 
 const variants = [
   { name: "Red", descriptor: POKEMON_RED_DESCRIPTOR, layout: POKEMON_RED_LAYOUT, create: createPokemonRedReader },
@@ -80,10 +81,9 @@ function mon(fixture: PokemonMemoryFixture, address: number, battle = false) {
 }
 
 /** Invented cartridge tables and block squares, independent of any commercial map. */
-function navigationFixture(variant = variants[0]!) {
+function navigationFixture(variant = variants[0]!, rom = new Uint8Array(7 * 0x4000)) {
   const fixture = startedFixture(variant);
   const navigation = variant.name === "Yellow" ? YELLOW_NAVIGATION : RED_BLUE_NAVIGATION;
-  const rom = new Uint8Array(7 * 0x4000);
   const reads: number[] = [];
   const memory = Object.assign(fixture, { readRom(offset: number, length: number) {
     assert.ok(offset >= 0 && offset + length <= rom.length && length <= 0x4000);
@@ -116,6 +116,60 @@ function navigationFixture(variant = variants[0]!) {
 }
 
 for (const variant of variants) {
+  test(`${variant.name} gives Jev regional gate guidance and retains return warnings across battle snapshots`, () => {
+    const world = cartridge(variant.name === "Yellow", [
+      ...forestJourney.slice(0, -1), { id: 2, warps: [[3, 2, 54, 0]], connections: [[1, 13, 0, 0]] },
+      { id: 54, warps: [[3, 7, 255, 0]] },
+    ]);
+    const { fixture, navigation } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length;
+    fixture.ram[variant.layout.mapX] = 4; fixture.ram[variant.layout.mapY] = 5;
+    for (const bit of [0, 34, 35, 57, 37]) fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    const visit = (map: number) => {
+      fixture.ram[variant.layout.mapId] = map;
+      fixture.ram[navigation.warpCount] = 2;
+      fixture.ram.set(map === 50 ? [7, 3, 0, 255, 0, 3, 1, 51] : [6, 3, 0, 50, 1, 3, 0, 47], navigation.warps);
+      fixture.ram[navigation.lastMap] = 13;
+      return provider.read(fixture.captureFrame());
+    };
+    visit(13);
+    let snapshot = visit(50);
+    assert.equal(snapshot.state.values.activeMilestone, "brock");
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_2")!.description, /Leads toward.*walking-area/);
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Leads away from.*Returns to Route 2/);
+    assert.match(snapshot.state.decisionSupport!.actionFacts.go_exit_2!.join(" "), /Leads toward/);
+    assert.doesNotMatch(snapshot.state.decisionSupport!.actionFacts.go_exit_1!.join(" "), /Leads toward/);
+    visit(13); visit(50);
+    fixture.ram[variant.layout.battleKind] = 1;
+    for (let read = 0; read < 100; read++) provider.read(fixture.captureFrame());
+    fixture.ram[variant.layout.battleKind] = 0;
+    snapshot = visit(13);
+    assert.match(snapshot.state.decisionSupport!.facts.join(" "), /repeated return crossings/);
+    assert.match(snapshot.state.decisionSupport!.actionFacts.go_exit_1!.join(" "), /3 immediate return crossings/);
+    const controls = snapshot.actions.map(action => action.id);
+    assert.ok(controls.includes("go_exit_1")); // Loop evidence cannot remove a legal return trip.
+    const before = fixture.saveState();
+    provider.read(fixture.captureFrame()); assert.deepEqual(fixture.saveState(), before);
+    provider.setObjectives!({ goal: "Inspect this gate", constraints: ["Remain here"], milestones: [] });
+    snapshot = visit(50);
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join(" "), /repeated return crossings|current walking area/);
+    assert.doesNotMatch(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Leads toward|Leads away|Returns to/);
+    provider.reset!();
+    assert.doesNotMatch(visit(13).state.decisionSupport!.facts.join(" "), /repeated return crossings/);
+    // Adjacent exits with one destination map may land in different regions. Do not guess which one wins.
+    const objects = 5 * 0x4000 + 0x1800 + 128; // Invented south-gate object table.
+    world.bytes[objects + 1] = 3; world.bytes.set([0, 4, 0, 51], objects + 2 + 8);
+    provider.reset!(); provider.setObjectives!(provider.defaultObjectives!);
+    fixture.ram[variant.layout.mapId] = 50;
+    fixture.ram[navigation.warpCount] = 3;
+    fixture.ram.set([7, 3, 0, 255, 0, 3, 1, 51, 0, 4, 0, 51], navigation.warps);
+    snapshot = provider.read(fixture.captureFrame());
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_2")!.description, /Regional route.*unknown/);
+    assert.ok(!snapshot.actions.some(action => action.id === "go_exit_3"));
+    assert.equal(fixture.inputs.length, 0);
+  });
+
   test(`${variant.name} verifies the opening story flags, preserves custom goals, and offers a north-exit destination`, () => {
     const { fixture, navigation } = navigationFixture(variant);
     fixture.ram[variant.layout.mapId] = 0;

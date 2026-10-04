@@ -12,6 +12,7 @@ export interface PokemonRoute {
   readonly y: number;
   readonly destination?: number;
   readonly towardObjective: boolean;
+  readonly navigationFact?: string;
 }
 
 export interface PokemonRouteOutcome {

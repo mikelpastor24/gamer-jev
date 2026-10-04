@@ -5,6 +5,7 @@ import { pokemonNavigationExecution, PokemonRouteFeedback, type PokemonRoute } f
 import type { GameStateData } from "../src/core/game-reader.js";
 import { PokemonStoryProgress } from "../src/profiles/pokemon/progress.js";
 import { pokemonObjectives } from "../src/profiles/pokemon/objectives.js";
+import { PokemonTravelMemory } from "../src/profiles/pokemon/travel-memory.js";
 
 for (const yellow of [false, true]) {
   test(`${yellow ? "Yellow" : "Red/Blue"} map connectivity uses its own header tables and only known outdoor LAST_MAP returns`, () => {
@@ -145,4 +146,36 @@ test("Lavender arrival requires a settled overworld observation and is cleared o
   assert.ok(story.read(flags, { ...values, phase: "transition" })!.objective);
   assert.equal(story.read(flags, values)!.objective, undefined);
   story.reset(); assert.ok(story.read(flags, { ...values, mapId: 0 })!.objective);
+});
+
+test("travel memory retains return crossings across long battles and ignores unstable and duplicate snapshots", () => {
+  const memory = new PokemonTravelMemory();
+  const evidence = "brock:none:empty:one-party-member";
+  memory.observe(13, true, evidence);
+  memory.observe(50, false, evidence); // Transient map bytes do not establish a settled arrival.
+  assert.deepEqual(memory.routeFacts(13, 50), []);
+  memory.observe(50, true, evidence);
+  assert.match(memory.routeFacts(50, 13).join(" "), /map this visit came from/);
+  memory.observe(13, true, evidence); memory.observe(50, true, evidence); memory.observe(13, true, evidence);
+  for (let snapshot = 0; snapshot < 100; snapshot++) {
+    memory.observe(13, false, evidence); memory.observe(13, true, evidence);
+  }
+  assert.match(memory.facts(13).join(" "), /repeated return crossings.*Viridian Forest south gate/);
+  assert.match(memory.routeFacts(13, 50).join(" "), /3 immediate return crossings.*2 previous crossings/);
+  assert.deepEqual(memory.routeFacts(13, 1), []); // Another legal destination gets no invented loop warning.
+  memory.observe(13, true, "brock:none:new-item:one-party-member");
+  assert.deepEqual(memory.facts(13), []); assert.deepEqual(memory.routeFacts(13, 50), []);
+  memory.observe(50, true, "brock:none:new-item:one-party-member"); memory.reset();
+  assert.deepEqual(memory.routeFacts(50, 13), []);
+});
+
+test("travel memory does not label onward traversal through both forest gates as an immediate return loop and stays bounded", () => {
+  const memory = new PokemonTravelMemory();
+  for (const map of [13, 50, 51, 47, 13, 2]) memory.observe(map, true, "same-evidence");
+  assert.deepEqual(memory.facts(13), []);
+  assert.doesNotMatch(memory.routeFacts(13, 50).join(" "), /return crossings/);
+  for (let cycle = 0; cycle < 8; cycle++) for (const map of [1, 13, 1]) memory.observe(map, true, "same-evidence");
+  assert.match(memory.facts(1).join(" "), /repeated return crossings/);
+  for (let map = 60; map < 100; map++) memory.observe(map, true, "same-evidence");
+  assert.deepEqual(memory.facts(1), []); assert.deepEqual(memory.routeFacts(13, 1), []);
 });

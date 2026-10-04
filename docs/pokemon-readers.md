@@ -237,13 +237,29 @@ routes**, or in the complete Game state/API snapshot. Action descriptions also
 include concise facts; action records include `executionReason`.
 
 [`map-graph.ts`](../src/profiles/pokemon/map-graph.ts) reads revision-specific
-map header, connection, and warp tables from the loaded ROM. This supplies
-coarse map distances to the current story destination. Outdoor-parent return
-edges are inferred only for maps with a LAST_MAP warp; sealed maps get no
-invented return. An exit that decreases this distance is described as a
-candidate toward the milestone. The graph does not prove regional reachability,
-unlock a gate, implement special mechanics, or guarantee the shortest playable
-story route. Known sprite IDs provide appearance labels such as Professor Oak
+map header, connection, and warp tables from the loaded ROM.
+[`region-graph.ts`](../src/profiles/pokemon/region-graph.ts) reads tileset/block
+and collision tables to split maps into separate walking areas. Warp squares
+are endpoints, tile-pair barriers remain barriers, and ledges connect areas in
+one direction. Connections use signed landing offsets; doors use their exact
+zero-based destination warp, including outdoor-parent LAST_MAP returns. It
+compares each offered exit's landing area with the current area's distance to
+the active recognized milestone's map. Actions describe closer, farther, or
+unknown routes. Grouped doorway entries with different landing distances remain
+unknown. It never selects an exit or marks the milestone complete.
+
+For example, Route 2's southern and northern areas share a map ID but have no
+ordinary walking path between them. Returning south from Viridian Forest's
+south gate must not be labeled a shortcut to Brock. The static regional graph
+instead describes onward travel through the forest and its north gate.
+Derived topology is bounded to 248 maps, 16,384 squares per map, 262,144 total
+squares, 32,768 nodes, and 65,536 edges, with one cached objective-distance
+table. Reset/restore clears it; raw navigation ROM caching remains at four banks.
+Absent, invalid, oversized, or unreachable data remains unknown. Static terrain
+does not model changing script gates, moving NPCs, Cut, Surf, Strength puzzles,
+conveyors, or special warps. Local availability still uses fresh RAM, and no
+coarse map-distance fallback claims that a disconnected area is reachable.
+Known sprite IDs provide appearance labels such as Professor Oak
 or Poke Ball; they do not prove an actor's current script or an object's contents.
 
 Feedback retains up to 32 target/context records and the best observed local
@@ -251,6 +267,25 @@ distance. Repeating the same partial approach increments failed-attempt evidence
 even if it moves the player. A new shortest distance, map change, or observed
 story check, bag item IDs, or party count change clears applicable repetition evidence. This is
 navigation feedback, not verified story progress or a forced recovery choice.
+
+[`travel-memory.ts`](../src/profiles/pokemon/travel-memory.ts) separately keeps
+up to 32 settled map crossings, so long battles cannot erase navigation loops
+from the short decision history. It identifies repeated immediate returns and
+labels the exit back to the map this visit came from. Duplicate snapshots,
+menus, ongoing movement, and transitions do not count as arrivals. New tracked
+story checks, badges, bag contents, or party count clear this evidence, as do
+objective edits and reset/restore. Battle HP, PP, and level changes alone do not
+establish travel progress. Warnings stay bounded and retain all legal return
+choices, including useful healing or backtracking trips.
+
+The reference project's [region graph](https://github.com/christianmat/jev-pokemon/blob/main/src/game/regions.ts)
+and [overworld decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/overworld.ts)
+inspired these original adaptations. It also asks Jev for a persistent focus
+such as progress or healing, tags repeated ineffective options, and sometimes
+samples an alternative after repeated failure. This project currently adds
+regional facts and crossing memory; it always executes Jev's selected action.
+Persistent Jev-selected focus, service routing, and dynamic regional refinements
+remain future work.
 
 These are decoded mechanical facts, not universal legal-command guarantees.
 Unknown or uninitialized collision data preserves directional attempts. Surfing
@@ -347,8 +382,10 @@ GameReader contract
 decoding and action descriptions. [`encoding.ts`](../src/profiles/pokemon/encoding.ts)
 owns English character codes, BCD, bit counts, and boxed text.
 `decision-support.ts` owns profile-specific facts and local navigation;
-`progress.ts` interprets supplied story checkpoints, `map-graph.ts` owns coarse
-connectivity, and `navigation-execution.ts` retains a selected destination;
+`progress.ts` interprets supplied story checkpoints, `map-graph.ts` decodes map
+metadata, `region-graph.ts` supplies static regional distance facts,
+`travel-memory.ts` retains map crossings, and `navigation-execution.ts` retains
+a selected destination;
 `navigation-layout.ts` supplies verified RAM and ROM addresses for its mechanics.
 `battle-support.ts` decodes move/type facts and menu availability;
 `battle-execution.ts` retains the selected attack slot, and `battle-layout.ts`
@@ -438,13 +475,21 @@ recognized the actual normal move menu and executed slot 2 (Growl): its PP fell
 from 40 to 39, Scratch's PP stayed unchanged, and the enemy's Attack fell. It
 used an offline fixture decider, made no API requests, and did not overwrite the
 user's checkpoint. These checks validate mechanics rather than Jev's strategy.
+Synthetic regional tests cover disconnected areas, exact gate landings, signed
+connection offsets, warp endpoints, directed ledges, unknown tables, and repeated
+crossings across battle snapshots for all three readers. A read-only local
+cartridge check found the same south forest gate distances in Red, Blue, and
+Yellow: eight static area transitions from the gate to Pewter Gym, seven after
+entering the forest, and ten after returning to southern Route 2. An isolated
+Red checkpoint replay confirmed that a chosen route still stops for a wild
+battle; it did not establish an uninterrupted trip through the forest.
 Full-game
 play and live Jev performance have not been verified. Yellow-specific follower
 behavior and Pikachu's happiness are not decoded by the shared reader.
 
 These readers supply observations and local wayfinding, not a complete Pokémon
-agent. Complete region-aware routing, gate/script prerequisites, full battle-command
+agent. Dynamic region-aware routing, gate/script prerequisites, full battle-command
 legality, full field mechanics, and verified full-objective completion remain
-future work. Coarse connectivity and named story checks do not fill those gaps.
+future work. Static regional distance and named story checks do not fill those gaps.
 Vision can supplement missing visible evidence.
 Loading the ROM and decoding state do not establish that Jev will finish it.

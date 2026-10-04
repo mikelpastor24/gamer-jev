@@ -120,9 +120,29 @@ an explicit session-local Lavender arrival checkpoint; they do not verify every
 instruction, team preparation, custom prose, or full-objective completion.
 Opening event bits 0/34/35/57/37 identify Oak, starter, rival, parcel, and Pokedex.
 The hideout boss flag alone does not prove the Silph Scope was collected.
-Coarse map graph candidates come from revision-specific cartridge header tables,
-not bundled assets; map connectivity does not establish region/gate reachability.
+Map metadata comes from revision-specific cartridge header tables, not bundled
+assets. Static regional guidance additionally decodes tileset blocks and collision
+lists, separates disconnected walking areas, preserves tile pairs and directed
+ledges, treats warps as endpoints, and uses exact warp/connection landing squares.
+It labels closer/farther/unknown exits to the active supplied milestone's map;
+coarse map distance alone must not label an exit as onward travel. Bound derived
+topology to 248 maps, 16,384 squares per map, 262,144 total squares, 32,768 nodes,
+65,536 edges, and one objective-distance table. Reset/restore clears topology;
+navigation raw ROM caching remains four banks. Static geometry does not verify
+scripts, moving actors, HMs, puzzles, special warps, or goal completion. Local
+action availability continues to use fresh RAM. The south forest gate's forward
+and return landing distances were checked against all three cartridges without
+API calls; synthetic tests cover disconnected areas, gates, ledges and unknown data.
 Preserve all user constraints and leave target selection to Jev.
+
+PokemonTravelMemory retains at most 32 settled map crossings independently of
+the short decision history. It exposes repeated immediate returns and the exit
+back to this visit's entry map, without removing legal backtracking choices.
+Movement, menus, transitions and duplicate snapshots do not count as arrivals.
+Tracked story checks, badges, bag contents, party count, objective edits and
+reset/restore clear it. HP/PP/level changes alone do not verify navigation progress.
+Persistent Jev-selected focus and dynamic regional refinements remain future work;
+never copy the reference project's sampled alternatives or checkpoint rescue.
 
 `PokemonInteractionMemory` keeps at most 32 map/position/facing interaction
 records and eight recent text fragments per active dialogue. It exposes bounded

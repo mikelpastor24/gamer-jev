@@ -1,11 +1,24 @@
-/** Coarse map connectivity only: does not prove regional reachability or script prerequisites. */
+export interface PokemonMapWarp {
+  readonly x: number; readonly y: number; readonly destination: number; readonly destinationWarp: number;
+}
+export interface PokemonMapConnection {
+  readonly direction: number; readonly destination: number; readonly xAlign: number; readonly yAlign: number;
+}
+export interface PokemonMapData {
+  readonly id: number; readonly bank: number; readonly tileset: number;
+  readonly width: number; readonly height: number; readonly blocks: number;
+  readonly warps: readonly PokemonMapWarp[]; readonly connections: readonly PokemonMapConnection[];
+}
+
+/** Bounded cartridge header metadata; coarse distances alone do not prove regional reachability. */
 export class PokemonMapGraph {
   private edges: Map<number, Set<number>> | undefined;
-  reset(): void { this.edges = undefined; }
+  private metadata = new Map<number, PokemonMapData>();
+  reset(): void { this.edges = undefined; this.metadata.clear(); }
 
-  distance(from: number, to: number, byte: (offset: number) => number, yellow: boolean, byteLength: number): number | undefined {
+  maps(byte: (offset: number) => number, yellow: boolean, byteLength: number): ReadonlyMap<number, PokemonMapData> {
     if (!this.edges) {
-      if (byteLength < (yellow ? 64 : 4) * 0x4000) { this.edges = new Map(); return from === to ? 0 : undefined; }
+      if (byteLength < (yellow ? 64 : 4) * 0x4000) { this.edges = new Map(); return this.metadata; }
       try {
         const pointers = yellow ? 63 * 0x4000 + 0x1f2 : 0x1ae;
         const banks = yellow ? 63 * 0x4000 + 0x3e4 : 3 * 0x4000 + 0x23d;
@@ -20,20 +33,28 @@ export class PokemonMapGraph {
           const height = byte(header + 1), width = byte(header + 2), mask = byte(header + 9);
           if (!width || !height || width > 64 || height > 64 || mask > 15 || byte(header) >= 24) continue;
           const destinations = new Set<number>();
+          const connections: PokemonMapConnection[] = [];
           let end = header + 10;
-          for (const bit of [8, 4, 2, 1]) if (mask & bit) {
-            const destination = byte(end); if (destination < 248) destinations.add(destination); end += 11;
+          for (const [direction, bit] of [8, 4, 2, 1].entries()) if (mask & bit) {
+            const destination = byte(end); if (destination < 248) destinations.add(destination);
+            const signed = (value: number) => value > 127 ? value - 256 : value;
+            connections.push({ direction, destination, yAlign: signed(byte(end + 7)), xAlign: signed(byte(end + 8)) });
+            end += 11;
           }
           const objects = word(end);
           if (objects < 0x4000 || objects >= 0x8000) continue;
           const start = address(bank, objects), count = byte(start + 1);
           if (count > 32) continue;
+          const warps: PokemonMapWarp[] = [];
           for (let warp = 0; warp < count; warp++) {
-            const destination = byte(start + 2 + warp * 4 + 3);
+            const entry = start + 2 + warp * 4, destination = byte(entry + 3);
+            warps.push({ y: byte(entry), x: byte(entry + 1), destinationWarp: byte(entry + 2), destination });
             if (destination === 255) returns.add(id);
             else if (destination < 248) destinations.add(destination);
           }
           edges.set(id, destinations);
+          this.metadata.set(id, { id, bank, tileset: byte(header), width: width * 2, height: height * 2,
+            blocks: word(header + 3), connections, warps });
         }
         // LAST_MAP indoors returns to an outdoor parent; never fabricate a return for a sealed door.
         for (const [parent, destinations] of edges) if (parent < 37) for (const destination of destinations) {
@@ -43,14 +64,20 @@ export class PokemonMapGraph {
       } catch {
         // Optional topology may be absent in a synthetic cartridge or an unsupported layout.
         this.edges = new Map();
+        this.metadata.clear();
       }
     }
+    return this.metadata;
+  }
+
+  distance(from: number, to: number, byte: (offset: number) => number, yellow: boolean, byteLength: number): number | undefined {
+    this.maps(byte, yellow, byteLength);
     const seen = new Set([from]);
     const queue = [{ map: from, distance: 0 }];
     for (let index = 0; index < queue.length; index++) {
       const current = queue[index]!;
       if (current.map === to) return current.distance;
-      for (const next of this.edges.get(current.map) ?? []) if (!seen.has(next)) { seen.add(next); queue.push({ map: next, distance: current.distance + 1 }); }
+      for (const next of this.edges!.get(current.map) ?? []) if (!seen.has(next)) { seen.add(next); queue.push({ map: next, distance: current.distance + 1 }); }
     }
     return undefined;
   }

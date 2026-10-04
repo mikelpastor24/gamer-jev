@@ -24,6 +24,7 @@ export interface PokemonNavigationLayout {
   readonly tilePairs: number;
   readonly ledges: number;
   readonly warpTiles: number;
+  readonly tilesets: number;
 }
 
 export const RED_BLUE_NAVIGATION: PokemonNavigationLayout = Object.freeze({
@@ -31,7 +32,7 @@ export const RED_BLUE_NAVIGATION: PokemonNavigationLayout = Object.freeze({
   counters: 0xd532, grass: 0xd535, walkCounter: 0xcfc5, joyIgnore: 0xcd6b,
   warpCount: 0xd3ae, warps: 0xd3af, lastMap: 0xd365, connections: 0xd370,
   spriteCount: 0xd4e1, hiddenFlags: 0xd5a6, hiddenList: 0xd5ce,
-  signCount: 0xd4b0, signs: 0xd4b1, strengthFlags: 0xd728, eventFlags: 0xd747, tilePairs: 0x0c7e, ledges: 6 * 0x4000 + 0x26cf, warpTiles: 3 * 0x4000 + 0x04cc,
+  signCount: 0xd4b0, signs: 0xd4b1, strengthFlags: 0xd728, eventFlags: 0xd747, tilePairs: 0x0c7e, ledges: 6 * 0x4000 + 0x26cf, warpTiles: 3 * 0x4000 + 0x04cc, tilesets: 3 * 0x4000 + 0x07be,
 });
 
 export const YELLOW_NAVIGATION: PokemonNavigationLayout = Object.freeze({
@@ -39,5 +40,5 @@ export const YELLOW_NAVIGATION: PokemonNavigationLayout = Object.freeze({
   counters: 0xd531, grass: 0xd534, walkCounter: 0xcfc4, joyIgnore: 0xcd6b,
   warpCount: 0xd3ad, warps: 0xd3ae, lastMap: 0xd364, connections: 0xd36f,
   spriteCount: 0xd4e0, hiddenFlags: 0xd5a5, hiddenList: 0xd5cd,
-  signCount: 0xd4af, signs: 0xd4b0, strengthFlags: 0xd727, eventFlags: 0xd746, tilePairs: 0x0ada, ledges: 6 * 0x4000 + 0x2851, warpTiles: 3 * 0x4000 + 0x0215,
+  signCount: 0xd4af, signs: 0xd4b0, strengthFlags: 0xd727, eventFlags: 0xd746, tilePairs: 0x0ada, ledges: 6 * 0x4000 + 0x2851, warpTiles: 3 * 0x4000 + 0x0215, tilesets: 3 * 0x4000 + 0x0558,
 });

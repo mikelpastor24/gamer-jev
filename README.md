@@ -176,9 +176,11 @@ the transition. Automatic stairs and special warp rules retain their own checks.
 Jev can select a destination action to walk to an exit or approach and interact
 with an object/sign. The profile executor retains that destination for up to
 600 frames, settling movement locally and stopping for interruptions, changed
-maps, or an unavailable route. It then returns control to Jev. Coarse map
-connectivity and the active recognized story checkpoint describe useful candidate
-destinations. Repeated partial approaches retain failed-attempt evidence.
+maps, or an unavailable route. It then returns control to Jev. Static walking
+regions and exact door landing coordinates distinguish disconnected areas of
+the same map when describing travel toward the active recognized checkpoint.
+Repeated partial approaches retain failed-attempt evidence; bounded map-crossing
+memory warns about immediate return loops even after long battles.
 Surfing and special field mechanics remain partial; decoded routes do not prove
 quest progress or full-game competence.
 
@@ -614,11 +616,11 @@ registration, JSON schema, validation, and examples.
   and Yellow revisions. Startup, naming, the starting room, and overworld menus
   were checked locally for all three; party/battle decoding is tested with
   synthetic RAM. Full-game play, other Pokémon revisions and generations,
-  complete regional routing, full field/battle-command legality, and verified
+  dynamic regional routing, full field/battle-command legality, and verified
   full-objective completion remain future work. Local collision and destination
   executions reached Pallet Town, Oak's encounter, and his laboratory in all
   three, using an offline fixture decider and preserved saves. Named later-story
-  checks and coarse map connectivity are partial; no real-model success is claimed.
+  checks and static regional routing are partial; no real-model success is claimed.
   Normal battles add cartridge-derived move names, types, power, base accuracy,
   PP, STAB and type effectiveness. Jev can select an explicit usable move slot;
   its executor navigates and confirms only that choice. Metadata was checked

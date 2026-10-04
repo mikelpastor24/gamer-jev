@@ -3,8 +3,10 @@ import type { GameReaderMemory, GameStateData } from "../../core/game-reader.js"
 import type { PokemonNavigationLayout } from "./navigation-layout.js";
 import { PokemonInteractionMemory } from "./interaction-memory.js";
 import { PokemonStoryProgress } from "./progress.js";
-import { PokemonMapGraph } from "./map-graph.js";
+import { PokemonRegionGraph } from "./region-graph.js";
 import { PokemonRouteFeedback, type PokemonRoute, type PokemonRouteOutcome } from "./navigation-execution.js";
+import { pokemonLocation as location } from "./locations.js";
+import { PokemonTravelMemory } from "./travel-memory.js";
 
 const directions = [
   { name: "up", button: "UP", dx: 0, dy: -1, facing: 4, connection: 8 },
@@ -20,17 +22,6 @@ interface Target extends Point {
   readonly destination?: number; readonly triggers?: readonly Direction[]; readonly squares?: readonly Point[];
   readonly boundary?: Direction;
 }
-const locations: Readonly<Record<number, string>> = {
-  0: "Pallet Town", 1: "Viridian City", 2: "Pewter City", 3: "Cerulean City",
-  4: "Lavender Town", 5: "Vermilion City", 6: "Celadon City", 7: "Fuchsia City",
-  8: "Cinnabar Island", 9: "Indigo Plateau", 10: "Saffron City",
-  37: "Player's house, ground floor", 38: "Player's house, upper floor",
-  39: "Rival's house", 40: "Oak's laboratory",
-  41: "Viridian Pokemon Center", 42: "Viridian Poke Mart",
-};
-function location(id: number): string {
-  return locations[id] ?? (id >= 12 && id <= 36 ? `Route ${id - 11}` : `map ${id}`);
-}
 const key = ({ x, y }: Point) => `${x},${y}`;
 const actionId = (direction: Direction) => `press_${direction.name}`;
 
@@ -40,9 +31,10 @@ export class GenerationOneDecisionSupport {
   private readonly banks = new Map<number, Uint8Array>();
   private readonly interactions = new PokemonInteractionMemory();
   private readonly story: PokemonStoryProgress;
-  private readonly graph = new PokemonMapGraph();
+  private readonly graph = new PokemonRegionGraph();
   private readonly routes = new Map<string, PokemonRoute>();
   private readonly attempts = new PokemonRouteFeedback();
+  private readonly travel = new PokemonTravelMemory();
   private progressSignature = "";
   private contextKey = "";
   private readonly layout: PokemonNavigationLayout | undefined;
@@ -51,27 +43,28 @@ export class GenerationOneDecisionSupport {
     this.story = new PokemonStoryProgress(layout?.collisionBank === 1);
     if (layout) for (const [name, address] of Object.entries(layout)) {
       if (!Number.isSafeInteger(address) || (name === "collisionBank" ? address < 0 || address > 255 :
-          name === "tilePairs" || name === "ledges" || name === "warpTiles" ? address < 0 || address >= 8 * 1024 * 1024 : address < 0xc000 || address > 0xdfff)) {
+          name === "tilePairs" || name === "ledges" || name === "warpTiles" || name === "tilesets" ? address < 0 || address >= 8 * 1024 * 1024 : address < 0xc000 || address > 0xdfff)) {
         throw new Error("Invalid Generation I navigation layout.");
       }
     }
   }
   reset(): void {
-    this.banks.clear(); this.interactions.reset(); this.story.reset(); this.graph.reset(); this.routes.clear(); this.attempts.reset();
+    this.banks.clear(); this.interactions.reset(); this.story.reset(); this.graph.reset(); this.routes.clear(); this.attempts.reset(); this.travel.reset();
     this.contextKey = ""; this.progressSignature = "";
   }
-  setObjectives(objectives: Objectives): void { this.story.setObjectives(objectives); this.attempts.reset(); }
+  setObjectives(objectives: Objectives): void { this.story.setObjectives(objectives); this.attempts.reset(); this.travel.reset(); }
   route(id: string): PokemonRoute | undefined { return this.routes.get(id); }
   remember(target: PokemonRoute, outcome: PokemonRouteOutcome): void { this.attempts.remember(target, outcome); }
   actions(state: GameState): readonly AgentAction[] {
     if (state.values.phase !== "overworld" || state.values.movementInProgress) return [];
     return [...this.routes.values()].map(route => ({ id: route.id, description: [
       `${route.interact ? "Approach and interact with" : "Walk to"} ${route.label}. ${route.length} local step(s).`,
-      route.towardObjective ? "Leads toward the active supplied milestone by connectivity or a known interaction." : "Choose only if useful for the user's goal or constraints.",
+      route.navigationFact ?? (route.towardObjective ? "A known interaction relates to the active supplied milestone." : "Choose only if useful for the user's goal or constraints."),
+      ...(route.destination === undefined ? [] : this.travel.routeFacts(Number(state.values.mapId), route.destination)),
       this.attempts.attempts(route) ? `Already attempted ${this.attempts.attempts(route)} time(s) without a new shortest distance or map change. Repeating the same partial approach is not new progress.` : "",
       "Execute this destination for at most 600 frames; stop for dialogue, battle, changed maps, or a blocked route.",
     ].filter(Boolean).join(" ").slice(0, 500), buttons: [], frames: 600, stop: false, execution: "profile" as const,
-      availabilityKey: `${state.values.mapId}:${route.id}:${state.values.activeMilestone ?? "custom"}` }));
+      availabilityKey: `${route.context}:${route.id}` }));
   }
 
   read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, inventory: readonly number[] = []): GameStateData {
@@ -82,10 +75,11 @@ export class GenerationOneDecisionSupport {
     const descriptions: Record<string, string> = {};
     const interaction = this.interactions.read(state, this.layout ? ram.subarray(this.layout.eventFlags - 0xc000, this.layout.eventFlags - 0xc000 + 320) : new Uint8Array());
     const flags = this.layout ? ram.subarray(this.layout.eventFlags - 0xc000, this.layout.eventFlags - 0xc000 + 320) : new Uint8Array();
-    const progress = this.story.read(flags, { ...state, ...(this.layout ? {
+    const settledState = { ...state, ...(this.layout ? {
       movementInProgress: ram[this.layout.walkCounter - 0xc000]! > 0,
       controlBusy: (ram[this.layout.joyIgnore - 0xc000]! & 0xf0) === 0xf0,
-    } : {}) }, inventory);
+    } : {}) };
+    const progress = this.story.read(flags, settledState, inventory);
     if (progress) {
       Object.assign(values, progress.values);
       for (const name of Object.keys(progress.values)) descriptions[name] = name === "completedStoryChecks" ?
@@ -93,9 +87,12 @@ export class GenerationOneDecisionSupport {
         "Profile story evidence and the first pending recognized user milestone; custom text is not automatically verified.";
       facts.push(...progress.facts);
       this.contextKey = `${state.mapId}:${progress.objective?.id ?? "custom"}`;
-      const signature = `${progress.values.completedStoryChecks}:${state.badges}:${inventory.join(",")}:${state.partyCount}`;
-      if (signature !== this.progressSignature) { this.progressSignature = signature; this.attempts.reset(); }
     }
+    const signature = `${progress?.values.completedStoryChecks ?? ""}:${state.badges}:${inventory.join(",")}:${state.bagItems ?? ""}:${state.partyCount}`;
+    if (signature !== this.progressSignature) { this.progressSignature = signature; this.attempts.reset(); }
+    const currentMap = typeof state.mapId === "number" ? state.mapId : undefined;
+    this.travel.observe(currentMap, state.gameStarted === true && state.phase === "overworld" && !settledState.movementInProgress && !settledState.controlBusy, signature);
+    if (currentMap !== undefined) facts.push(...this.travel.facts(currentMap));
     const finish = (): GameStateData => {
       const support = interaction.decisionSupport!;
       for (const [id, evidence] of Object.entries(support.actionFacts)) actionFacts[id] = [...evidence, ...(actionFacts[id] ?? [])].slice(0, 8);
@@ -342,6 +339,10 @@ export class GenerationOneDecisionSupport {
       if (exit) targets.push({ ...exit, id: `go_boundary_${direction.name}`, destination: u8(layout.connections + 1 + directions.indexOf(direction) * 11), boundary: direction,
         label: `${direction.name} boundary to ${location(u8(layout.connections + 1 + directions.indexOf(direction) * 11))}`, interact: false });
     }
+    const regional = progress?.objective ? this.graph.guidance(Number(state.mapId), player, progress.objective.map,
+      romByte, layout, memory.romByteLength ?? 0) : undefined;
+    if (progress?.objective) facts.push(`Navigation uses separate walking areas and exact warp landing coordinates, not just map IDs. ${regional?.here === undefined ? "The static regional route to the active milestone is unknown." : `The current walking area is ${regional.here} static area transition(s) from the milestone's map.`} Trees, water, scripts, moving objects and other special mechanics can change access; this is not verified story progress.`);
+    this.contextKey = `${state.mapId}:${progress?.objective?.id ?? "custom"}:${progress?.objective?.map ?? "unknown"}`;
     const candidateRoutes: PokemonRoute[] = [];
     const routeFacts = targets.map(target => {
       const goals = goalsFor(target).filter(point => distance[indexOf(point)]! >= 0);
@@ -350,13 +351,28 @@ export class GenerationOneDecisionSupport {
       const mask = best.reduce((bits, point) => bits | first[indexOf(point)]!, 0);
       const next = length === 0 ? target.boundary ? [target.boundary] : target.squares && standingWarp ? [...standingWarp.triggers!] : [] : directions.filter((_direction, index) => mask & 1 << index);
       let towardObjective = false;
+      let navigationFact: string | undefined;
       if (progress?.objective) {
         const objective = progress.objective;
         if (target.destination !== undefined) {
-          const here = this.graph.distance(Number(state.mapId), objective.map, romByte, layout.collisionBank === 1, memory.romByteLength ?? 0);
-          const there = this.graph.distance(target.destination, objective.map, romByte, layout.collisionBank === 1, memory.romByteLength ?? 0);
-          towardObjective = target.destination === objective.map || here !== undefined && there !== undefined && there < here;
-          if (objective.id === "first_rival" && state.mapId === 40 && target.destination === 0) towardObjective = true;
+          const here = regional?.here;
+          const landings = target.boundary ? [regional?.exitDistance({ ...target, destination: target.destination,
+            direction: directions.indexOf(target.boundary) })] : warps.filter(warp =>
+              (target.squares ?? [target]).some(point => key(point) === key(warp))).map(warp =>
+              regional?.exitDistance({ ...warp, destination: target.destination!, warp: Number(warp.id!.slice(8)) - 1 }));
+          // A grouped doorway can be reached on either square; differing landing areas remain unknown.
+          const there = landings.length && landings.every(distance => distance !== undefined && distance === landings[0]) ? landings[0] : undefined;
+          towardObjective = length !== null && there !== undefined && (target.destination === objective.map || here !== undefined && there < here);
+          navigationFact = there === undefined ? "Regional route to the active supplied milestone is unknown; shared map IDs alone do not establish onward travel." :
+            `${towardObjective ? "Leads toward" : here !== undefined && there > here ? "Leads away from" : "Does not establish a closer route to"} the active supplied milestone (${there} static walking-area transition(s) from its map). Scripts and special mechanics may change access.`;
+          if (objective.id === "meet_oak" && state.mapId === 0 && target.destination === 12) {
+            towardObjective = length !== null;
+            navigationFact = "Leads toward the active supplied milestone: approaching Pallet Town's north exit triggers Oak's encounter.";
+          }
+          if (objective.id === "first_rival" && state.mapId === 40 && target.destination === 0) {
+            towardObjective = length !== null;
+            navigationFact = "Leads toward the active supplied milestone: trying to leave Oak's laboratory after receiving a starter triggers the rival battle.";
+          }
         } else if (state.mapId === objective.map && target.interact) {
           towardObjective = objective.id === "starter" ? layout.collisionBank === 1 ? target.label.startsWith("Professor Oak") : target.label.startsWith("Poke Ball") : target.label.startsWith("Professor Oak") || target.label.startsWith("Shop clerk");
         }
@@ -364,19 +380,23 @@ export class GenerationOneDecisionSupport {
       if (length !== null && target.id) {
         candidateRoutes.push({ id: target.id, context: this.contextKey, label: target.label, length, nextButtons: next.map(direction => direction.button),
           interact: target.interact, x: target.x, y: target.y, towardObjective,
+          ...(navigationFact ? { navigationFact } : {}),
           ...(target.destination !== undefined ? { destination: target.destination } : {}) });
       }
       const at = (target.squares ?? [target]).map(point => `(${point.x},${point.y})`).join("/").slice(0, 96);
       const fact = length === null ? `${target.label} at ${at}: no route found with current walking rules and objects; special mechanics may be needed.` :
         `${target.label} at ${at}: ${length} local step(s) ${target.interact ? "to an interaction position" : "to the exit"}. ${length ? `Shortest first inputs: ${next.map(actionId).join(", ")}.` : target.interact ? "Face the target, then press A." : next.length ? `On the exit. Activate with ${next.map(actionId).join(" or ")}; sideways movement on equivalent mats is not a transition.` : "On the exit square; a directional trigger may be required."}`;
-      return { fact: `${fact}${towardObjective ? " Leads toward the active supplied milestone." : ""}`.slice(0, 500), length, next, brief: `${target.label} ${at}: shortest route ${length} step(s)` };
+      const travelFacts = target.destination === undefined ? [] : this.travel.routeFacts(Number(state.mapId), target.destination);
+      return { fact: `${fact}${navigationFact ? ` ${navigationFact}` : towardObjective ? " Leads toward the active supplied milestone." : ""}${travelFacts.length ? ` ${travelFacts.join(" ")}` : ""}`.slice(0, 500),
+        length, next, brief: `${target.label} ${at}: shortest route ${length} step(s)${travelFacts.length ? `; ${travelFacts.join(" ")}` : ""}`.slice(0, 500) };
     }).sort((a, b) => (a.length ?? Infinity) - (b.length ?? Infinity));
     for (const route of candidateRoutes.sort((a, b) => Number(b.towardObjective) - Number(a.towardObjective) || a.length - b.length).slice(0, 20)) {
       this.routes.set(route.id, route);
-      actionFacts[route.id] = [route.towardObjective ? "Leads toward the active supplied milestone by map connectivity or a known interaction; scripts, gates, and regional obstacles may still block it." : "Reachable local destination; relevance depends on the user's goal and constraints."];
+      actionFacts[route.id] = [route.navigationFact ?? (route.towardObjective ? "A known interaction relates to the active supplied milestone." : "Reachable local destination; relevance depends on the user's goal and constraints."),
+        ...(route.destination === undefined ? [] : this.travel.routeFacts(Number(state.mapId), route.destination))];
     }
     facts.push(...routeFacts.slice(0, 32 - facts.length).map(route => route.fact));
-    for (const direction of directions) actionFacts[actionId(direction)]!.push(...routeFacts.filter(route => route.next.includes(direction)).slice(0, 6).map(route => `${route.brief}; ${direction.button} ${route.length === 0 ? "activates this exit" : "starts this route"}.`));
+    for (const direction of directions) actionFacts[actionId(direction)]!.push(...routeFacts.filter(route => route.next.includes(direction)).slice(0, 6).map(route => `${route.brief}; ${direction.button} ${route.length === 0 ? "activates this exit" : "starts this route"}.`.slice(0, 500)));
     return finish();
   }
 
