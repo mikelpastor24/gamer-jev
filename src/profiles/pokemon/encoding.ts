@@ -44,6 +44,7 @@ export interface TextScreen {
   readonly top: string;
   readonly bottom: string;
   readonly hasBox: boolean;
+  readonly dialogueBox: boolean;
   readonly cursor?: { readonly x: number; readonly y: number; readonly row: string };
   readonly naming?: { readonly prompt: string; readonly name: string };
 }
@@ -54,6 +55,7 @@ export function readTextScreen(tiles: Uint8Array): TextScreen {
   if (tiles.length !== width * height) throw new Error("Generation I text screens require 20 by 18 tiles.");
   const inside = new Uint8Array(tiles.length);
   let hasBox = false;
+  let dialogueBox = false;
   for (let y = 0; y < height - 2; y++) for (let x = 0; x < width - 2; x++) {
     if (tiles[y * width + x] !== 0x79) continue;
     let right = x + 1;
@@ -63,6 +65,7 @@ export function readTextScreen(tiles: Uint8Array): TextScreen {
     while (bottom < height && tiles[bottom * width + x] === 0x7c && tiles[bottom * width + right] === 0x7c) bottom++;
     if (bottom >= height || bottom <= y + 1 || tiles[bottom * width + x] !== 0x7d || tiles[bottom * width + right] !== 0x7e) continue;
     hasBox = true;
+    if (x === 0 && right === 19 && y === 12 && bottom === 17) dialogueBox = true;
     for (let row = y + 1; row < bottom; row++) inside.fill(1, row * width + x + 1, row * width + right);
   }
   const rows = Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) =>
@@ -73,7 +76,7 @@ export function readTextScreen(tiles: Uint8Array): TextScreen {
   const rawRow = (y: number) => Array.from(tiles.subarray(y * width, (y + 1) * width), (tile) => decodeCharacter(tile) ?? " ").join("").trim();
   const namingPrompt = rawRow(1);
   const naming = rows.some((row) => row.toUpperCase().includes("A B C D E F G H I")) && /^(YOUR|RIVAL's) NAME\??$/.test(namingPrompt);
-  return { top: bounded(rows.slice(0, 9)), bottom: bounded(rows.slice(9)), hasBox,
+  return { top: bounded(rows.slice(0, 9)), bottom: bounded(rows.slice(9)), hasBox, dialogueBox,
     ...(cursorIndex < 0 ? {} : { cursor: { x: cursorIndex % width, y: Math.floor(cursorIndex / width), row: rows[Math.floor(cursorIndex / width)]! } }),
     ...(naming ? { naming: { prompt: namingPrompt, name: rawRow(2) } } : {}),
   };

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import type { GameReader } from "../src/core/game-reader.js";
 import type { DecisionContext } from "../src/core/agent.js";
-import { controllerActions } from "../src/core/actions.js";
+import { controllerActions, validateAgentActions } from "../src/core/actions.js";
 import { createDemoRom } from "../src/demo/rom.js";
 import { GameBoyEmulator } from "../src/emulator/game-boy/game-boy-emulator.js";
 import { DemoGameReader } from "../src/profiles/demo.js";
@@ -23,6 +23,14 @@ import { validateGameState } from "../src/core/game-state.js";
 const objectives = { goal: "Increase the horizontal scroll offset", constraints: [], milestones: [] };
 const budget = () => new RequestBudget({ maxRequests: 8, timeoutMs: 1000, intervalMs: 0, retries: 0 });
 const decision = (actionId: string) => ({ actionId, model: "test-jev", confidence: null, probabilities: {}, usage: { inputTokens: 0, outputTokens: 0 } });
+
+test("optional action context keys are bounded and validated before use", () => {
+  const action = controllerActions(["A"], 8)[0]!;
+  validateAgentActions([action, { ...action, id: "other", availabilityKey: "a".repeat(128) }], ["A"]);
+  for (const availabilityKey of ["", " ", "a".repeat(129), 123, null]) {
+    assert.throws(() => validateAgentActions([{ ...action, availabilityKey } as typeof action], ["A"]), /availability key/);
+  }
+});
 
 test("profile-owned decision support is bounded, copied, and preserved through optional vision", async () => {
   const emulator = new GameBoyEmulator(createDemoRom());

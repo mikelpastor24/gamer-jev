@@ -23,7 +23,7 @@ export interface ViewerOptions {
   readonly gameState?: GameStateProvider;
   readonly record?: (event: unknown) => void;
   readonly romLibrary?: LocalRomLibrary;
-  readonly loadRom?: (rom: Uint8Array, settings?: AgentSettings, selection?: PlayerSelection) => Promise<GameRuntime>;
+  readonly loadRom?: (rom: Uint8Array, settings?: AgentSettings, selection?: PlayerSelection, objectiveSource?: "reader" | "user") => Promise<GameRuntime>;
   readonly dispose?: () => void;
   readonly runtime?: GameRuntime;
   readonly launcher?: boolean;
@@ -110,7 +110,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     loadingRom = true; pause();
     let candidate: GameRuntime | undefined;
     try {
-      candidate = await options.loadRom(await romLibrary.read(id), game.player?.copySettings() ?? agent?.copySettings(), game.player?.copySelection());
+      candidate = await options.loadRom(await romLibrary.read(id), game.player?.copySettings() ?? agent?.copySettings(), game.player?.copySelection(), game.player?.copyObjectiveSource());
       candidate.agent?.pause();
       candidate.gameState.read(candidate.emulator.captureFrame());
       if (closing) throw new Error("The viewer is closing.");

@@ -33,6 +33,19 @@ export interface AgentAction {
   readonly buttons: readonly string[];
   readonly frames: number;
   readonly stop: boolean;
+  /** Optional profile-owned semantic context; a late response must still match it. */
+  readonly availabilityKey?: string;
+  /** A reader-owned executor implements this offered action within its frame ceiling. */
+  readonly execution?: "profile";
+}
+
+export type ActionExecutionStep =
+  | { readonly done: false; readonly buttons: readonly string[] }
+  | { readonly done: true; readonly reason: string };
+/** Mechanical execution of a model-selected target; cannot select a different target. */
+export interface GameActionExecution {
+  next(): ActionExecutionStep;
+  finish?(reason: string): void;
 }
 
 export interface ModelUsage { readonly inputTokens: number; readonly outputTokens: number }
@@ -55,9 +68,13 @@ export interface StateSnapshot {
 }
 export interface GameStateProvider {
   readonly id: string;
+  readonly defaultObjectives?: Objectives | undefined;
   read(frame: Frame): StateSnapshot;
   reset?(): void;
   setActionFrames?(frames: number): void;
+  setObjectives?(objectives: Objectives): void;
+  createExecution?(action: AgentAction): GameActionExecution;
+  shouldWait?(frame: Frame): boolean;
 }
 export interface VisualObservation { readonly text: string; readonly model: string; readonly usage: ModelUsage }
 export interface Observation extends VisualObservation {
@@ -78,6 +95,7 @@ export interface ActionRecord {
   readonly observation: string;
   readonly interrupted: boolean;
   readonly result?: ActionResult;
+  readonly executionReason?: string;
 }
 /** Changes observed at action completion are evidence, not proof of causation or goal progress. */
 export interface ActionResult {
@@ -117,6 +135,10 @@ export interface ObservationProvider {
   readSnapshot?(frame: Frame): StateSnapshot;
   reset?(): void;
   setActionFrames?(frames: number): void;
+  setObjectives?(objectives: Objectives): void;
+  createExecution?(action: AgentAction): GameActionExecution;
+  /** A bounded local settle, without requesting perception or a gameplay decision. */
+  shouldWait?(frame: Frame): boolean;
 }
 /** Visual perception cannot supply controller actions or overwrite memory-derived state. */
 export interface VisionProvider {

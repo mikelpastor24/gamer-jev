@@ -97,6 +97,9 @@ function navigationFixture(variant = variants[0]!) {
   const collisionAddress = variant.name === "Yellow" ? 0x7000 : 0x3000;
   word(navigation.blocks, 0x5000); word(navigation.collision, collisionAddress);
   rom.set([0, 0xff], collisionAddress); rom[navigation.tilePairs] = 0xff; rom[navigation.ledges] = 0xff;
+  // Invented automatic-warp list in bank 3; ordinary floor/mat tiles require a directional edge trigger.
+  for (let tileset = 0; tileset < 24; tileset++) rom.set([0, 0x60], navigation.warpTiles + tileset * 2);
+  rom.set([0x15, 0xff], 3 * 0x4000 + 0x2000);
   fixture.ram.fill(0xff, navigation.counters, navigation.counters + 4);
   fixture.ram[navigation.hiddenList] = 0xff;
   fixture.ram[navigation.warpCount] = 1; fixture.ram.set([1, 7, 1, 37], navigation.warps);
@@ -113,6 +116,136 @@ function navigationFixture(variant = variants[0]!) {
 }
 
 for (const variant of variants) {
+  test(`${variant.name} verifies the opening story flags, preserves custom goals, and offers a north-exit destination`, () => {
+    const { fixture, navigation } = navigationFixture(variant);
+    fixture.ram[variant.layout.mapId] = 0;
+    fixture.ram[variant.layout.mapX] = 6; fixture.ram[variant.layout.mapY] = 6;
+    fixture.ram[navigation.connections] = 8;
+    fixture.ram[navigation.connections + 1] = 12;
+    const blockBase = 2 * 0x4000 + 0x1000;
+    // Invented connected-map padding, so a northward boundary is mechanically reachable.
+    fixture.rom.byteLength = 7 * 0x4000;
+    const originalRead = fixture.readRom;
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    fixture.readRom = (offset, length) => {
+      const bytes = originalRead(offset, length);
+      if (offset === 2 * 0x4000) bytes.fill(0, blockBase + 255 * 16 - offset, blockBase + 256 * 16 - offset);
+      return bytes;
+    };
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.activeMilestone, "meet_oak");
+    const route = snapshot.actions.find(action => action.id === "go_boundary_up")!;
+    assert.ok(route); assert.equal(route.execution, "profile"); assert.equal(route.frames, 600);
+    assert.match(route.description, /Route 1.*Leads toward/);
+    assert.match(snapshot.state.decisionSupport!.facts.join("\n"), variant.name === "Yellow" ? /starts on row 0/ : /starts on row 1/);
+    fixture.ram[variant.layout.mapId] = 40;
+    assert.equal(provider.read(fixture.captureFrame()).state.values.activeMilestone, "meet_oak"); // A visit does not meet Oak.
+    for (const [bit, next] of [[0, "starter"], [34, "first_rival"], [35, "collect_parcel"], [57, "deliver_parcel"], [37, "brock"]] as const) {
+      fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+      snapshot = provider.read(fixture.captureFrame());
+      assert.equal(snapshot.state.values.activeMilestone, next);
+    }
+    provider.setObjectives!({ goal: "Inspect a sign and stay in this town", constraints: ["Stay here"], milestones: [] });
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.activeMilestone, undefined);
+    assert.equal(snapshot.state.values.starterReceived, true);
+    provider.reset?.();
+    assert.equal(provider.read(fixture.captureFrame()).state.values.starterReceived, true); // Flags survive local cache reset.
+  });
+
+  test(`${variant.name} offers editable defaults and explains a grouped edge exit rather than pacing between its mats`, () => {
+    const { fixture, navigation } = navigationFixture(variant);
+    fixture.ram[variant.layout.mapId] = 37;
+    fixture.ram[variant.layout.mapX] = 2; fixture.ram[variant.layout.mapY] = 7;
+    fixture.ram[variant.layout.facing] = 12;
+    fixture.ram[navigation.warpCount] = 2; fixture.ram.set([7, 2, 1, 0, 7, 3, 1, 0], navigation.warps);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    assert.equal(provider.defaultObjectives!.milestones.length, 16);
+    assert.match(provider.defaultObjectives!.milestones[0]!, /press toward the outside/);
+    assert.match(provider.defaultObjectives!.milestones[1]!, variant.name === "Yellow" ? /receive Pikachu/ : /choose a starter/);
+    const copied = provider.defaultObjectives!; (copied.milestones as string[])[0] = "Changed in caller";
+    assert.notEqual(provider.defaultObjectives!.milestones[0], "Changed in caller");
+    const snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.stepDOWN, "exit_trigger");
+    assert.equal(snapshot.state.values.exitTriggerInputs, "press_down");
+    assert.match(snapshot.actions.find(action => action.id === "press_down")!.description, /activate the exit to Pallet Town/);
+    assert.doesNotMatch(snapshot.actions.find(action => action.id === "press_down")!.description, /map boundary with no connection|only turn; it will not move/);
+    assert.match(snapshot.state.decisionSupport!.actionFacts.press_right![0]!, /SAME exit/);
+    const exits = snapshot.state.decisionSupport!.facts.filter(fact => fact.startsWith("Exit "));
+    assert.equal(exits.length, 1); assert.match(exits[0]!, /\(2,7\)\/\(3,7\).*Activate with press_down/);
+    assert.ok(snapshot.actions.some(action => action.id === "press_right")); // A lawful alternative is still Jev's choice.
+    fixture.ram[variant.layout.mapX] = 3;
+    const other = provider.read(fixture.captureFrame());
+    assert.match(other.state.decisionSupport!.facts.join("\n"), /Activate with press_down/);
+    assert.match(other.state.decisionSupport!.actionFacts.press_left![0]!, /SAME exit/);
+  });
+
+  test(`${variant.name} remembers completed dialogue beyond recent history and protects A from a changed meaning`, () => {
+    const fixture = startedFixture(variant);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    const navigation = variant.name === "Yellow" ? YELLOW_NAVIGATION : RED_BLUE_NAVIGATION;
+    const page = (text: string) => { const tiles = box(fixture); tiles.set(textBytes(text), 13 * 20 + 1); fixture.ram[variant.layout.fontLoaded] = 1; };
+    const close = () => { fixture.ram.fill(0, variant.layout.tileMap, variant.layout.tileMap + 360); fixture.ram[variant.layout.fontLoaded] = 0; };
+    page("MOM");
+    const first = provider.read(fixture.captureFrame());
+    const key = first.actions.find(action => action.id === "press_a")!.availabilityKey;
+    assert.equal(first.state.values.dialogueActive, true);
+    const saved = fixture.saveState(); provider.read(fixture.captureFrame()); assert.deepEqual(fixture.saveState(), saved);
+    page("MOM IS TALKING");
+    assert.equal(provider.read(fixture.captureFrame()).actions.find(action => action.id === "press_a")!.availabilityKey, key);
+    for (let index = 0; index < 20; index++) { page(`LINE ${String.fromCharCode(65 + index)}`); provider.read(fixture.captureFrame()); }
+    page("OAK IS NEXT DOOR"); provider.read(fixture.captureFrame()); close();
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.completedDialoguesHere, 1);
+    assert.equal(snapshot.state.values.lastDialogueStateChanged, false);
+    assert.match(String(snapshot.state.values.lastDialogueText), /OAK IS NEXT DOOR/);
+    assert.notEqual(snapshot.actions.find(action => action.id === "press_a")!.availabilityKey, key);
+    assert.match(snapshot.actions.find(action => action.id === "press_a")!.description, /A starts another interaction/);
+    assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /Already completed 1 dialogue/);
+    for (let index = 0; index < 10; index++) assert.equal(provider.read(fixture.captureFrame()).state.values.completedDialoguesHere, 1);
+    page("MOM");
+    snapshot = provider.read(fixture.captureFrame());
+    assert.notEqual(snapshot.actions.find(action => action.id === "press_a")!.availabilityKey, key);
+    close(); snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.completedDialoguesHere, 2);
+    // A quest event after the conversation invalidates the previous no-change warning.
+    fixture.ram[navigation.eventFlags + 319] = 1;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Already completed/);
+    assert.ok(snapshot.actions.some(action => action.id === "press_a"));
+    page("GIFT RECEIVED"); provider.read(fixture.captureFrame()); fixture.ram[navigation.eventFlags + 319] = 2;
+    close(); snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.lastDialogueStateChanged, true);
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Already completed/);
+    provider.reset!(); snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.lastDialogueText, undefined);
+    assert.equal(snapshot.state.values.completedDialoguesHere, undefined);
+    assert.equal(fixture.inputs.length, 0);
+  });
+
+  test(`${variant.name} requires a live bottom dialogue box and does not close conversations at a menu or transition`, () => {
+    const fixture = startedFixture(variant);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    box(fixture); // A stale box without the overworld font is not an active dialogue.
+    assert.equal(provider.read(fixture.captureFrame()).state.values.dialogueActive, false);
+    fixture.ram.fill(0, variant.layout.tileMap, variant.layout.tileMap + 360);
+    assert.equal(provider.read(fixture.captureFrame()).state.values.lastDialogueText, undefined);
+    box(fixture, 0, 6); fixture.ram[variant.layout.fontLoaded] = 1;
+    assert.equal(provider.read(fixture.captureFrame()).state.values.dialogueActive, false);
+    const tiles = box(fixture); tiles.set(textBytes("A REWARD"), 13 * 20 + 1);
+    const session = provider.read(fixture.captureFrame()).state.values.dialogueSession;
+    tiles[13 * 20 + 1] = 0xed; // A dialogue choice is still part of the conversation.
+    assert.equal(provider.read(fixture.captureFrame()).state.values.dialogueSession, session);
+    fixture.ram.fill(0, variant.layout.tileMap, variant.layout.tileMap + 360); fixture.ram[0xff40] = 0;
+    assert.equal(provider.read(fixture.captureFrame()).state.values.lastDialogueText, undefined);
+    fixture.ram[variant.layout.bagCount] = 1; fixture.ram.set([1, 1], variant.layout.bagItems);
+    fixture.ram[0xff40] = 0x80; fixture.ram[variant.layout.fontLoaded] = 0;
+    const snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.lastDialogueStateChanged, true);
+    assert.equal(snapshot.state.values.completedDialoguesHere, 1);
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Already completed/);
+  });
+
   test(`${variant.name} derives collision, exits, and shortest first inputs from live memory and read-only cartridge tables`, () => {
     const { fixture, reads } = navigationFixture(variant);
     const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
@@ -219,6 +352,32 @@ test("connected edges use the live connection strip, and uninitialized collision
   assert.equal(snapshot.state.values.stepUP, undefined);
   assert.ok(snapshot.actions.some(action => action.id === "press_up"));
   assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /collision table is unavailable/);
+});
+
+test("edge exit facts cover every facing boundary while special warp rules remain unknown", () => {
+  const { fixture, navigation, setTile, rom } = navigationFixture();
+  const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+  for (const [x, y, button] of [[0, 3, "left"], [7, 3, "right"], [3, 0, "up"], [3, 7, "down"]] as const) {
+    fixture.ram[POKEMON_RED_LAYOUT.mapX] = x; fixture.ram[POKEMON_RED_LAYOUT.mapY] = y;
+    fixture.ram.set([y, x, 1, 0], navigation.warps);
+    const snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.exitTriggerInputs, `press_${button}`);
+    assert.equal(snapshot.state.values[`step${button.toUpperCase()}`], "exit_trigger");
+  }
+  for (const mapId of [0x52, 0xc7, 0xc8, 0xca]) {
+    fixture.ram[POKEMON_RED_LAYOUT.mapId] = mapId;
+    assert.equal(provider.read(fixture.captureFrame()).state.values.exitTriggerInputs, undefined);
+  }
+  fixture.ram[POKEMON_RED_LAYOUT.mapId] = 37;
+  for (const tileset of [0, 13, 14, 23]) {
+    fixture.ram[navigation.tileset] = tileset;
+    assert.equal(provider.read(fixture.captureFrame()).state.values.exitTriggerInputs, undefined);
+  }
+  fixture.ram[navigation.tileset] = 1;
+  setTile(3, 7, 0x15); provider.reset!();
+  assert.equal(provider.read(fixture.captureFrame()).state.values.exitTriggerInputs, undefined); // Automatic staircase warp.
+  setTile(3, 7, 0); rom[navigation.warpTiles + 2] = 0; rom[navigation.warpTiles + 3] = 0; provider.reset!();
+  assert.equal(provider.read(fixture.captureFrame()).state.values.exitTriggerInputs, undefined); // Uninitialized cartridge table.
 });
 
 test("English Gen I decoding handles terminators, endian-independent BCD, and bit padding", () => {

@@ -166,9 +166,11 @@ export function createInspector(onControllerVisibility) {
         const item = document.createElement("button"); item.type = "button"; item.className = "action-item"; item.dataset.action = action.id;
         item.setAttribute("aria-label", `Inspect action ${action.id}`); item.title = action.description;
         const title = document.createElement("strong"); title.textContent = action.id.replace(/^press_/, "").replaceAll("_", " ").toUpperCase();
-        const duration = document.createElement("span"); duration.textContent = action.stop ? "End session" : `${action.frames} frames · ${action.buttons.join(" + ") || "no input"}`;
+        const duration = document.createElement("span"); duration.textContent = action.stop ? "End session" : action.execution === "profile" ? `Destination · up to ${action.frames} frames` : `${action.frames} frames · ${action.buttons.join(" + ") || "no input"}`;
         item.append(title, duration);
-        item.addEventListener("click", () => showDetail(action.id, `${action.stop ? "Stop the session" : `Buttons: ${action.buttons.join(" + ") || "none"}\nDuration: ${action.frames} frames`}`, action.description));
+        item.addEventListener("click", () => showDetail(action.id, action.stop ? "Stop the session" : action.execution === "profile" ?
+          `Profile destination executor\nFrame ceiling: ${action.frames}\nStops for interruptions; Jev chooses the next action.` :
+          `Buttons: ${action.buttons.join(" + ") || "none"}\nDuration: ${action.frames} frames`, action.description));
         return item;
       }));
     }

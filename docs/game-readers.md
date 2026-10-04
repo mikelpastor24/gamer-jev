@@ -12,6 +12,7 @@ flowchart LR
   Vision -->|visual evidence| Observation
   Observation --> Jev[Decision provider]
   Jev -->|validated action ID| Runner
+  Reader -->|optional read-only execution steps| Runner
   Runner -->|bounded controller inputs| Emulator
 ```
 
@@ -27,21 +28,33 @@ See [`GameReader`](../src/core/game-reader.ts) and the working
 ```ts
 interface GameReader {
   readonly descriptor: GameReaderDescriptor;
+  readonly defaultObjectives?: Objectives;
   readState(memory: GameReaderMemory): GameStateData;
   availableActions(state: GameState, controllerActions: readonly AgentAction[]): readonly AgentAction[];
+  setObjectives?(objectives: Objectives): void;
+  createExecution?(memory: GameReaderMemory, action: AgentAction): GameActionExecution;
+  shouldWait?(state: GameStateData, frame: number): boolean;
   reset?(): void;
 }
 ```
 
 - `descriptor` identifies the reader, console, name, and supported ROM SHA-256
   hashes. Register each supported revision only after verifying its layout.
+- Optional `defaultObjectives` supplies an editable goal, constraints, and up to
+  16 milestones for a new session. It follows the same runtime validation as
+  user objectives. CLI objectives and custom UI settings take precedence.
 - `readState` receives `readMemory(address, length)` and optional read-only
   `readRom(offset, length)`. It returns named
   string, number, or boolean values and English descriptions explaining them.
   It does not receive private emulator internals, write access, or API credentials.
 - `availableActions` derives valid choices from that state. It can filter the
   supplied controller actions or construct semantic actions such as confirming
-  a menu item. Each action still maps to supported buttons and bounded frames.
+  a menu item or approaching a destination. Each action uses supported buttons
+  and bounded frames, directly or through an optional profile executor.
+- `setObjectives` receives validated supplied objectives at activation, provider
+  replacement, and runtime edits. A profile may recognize milestone text and
+  report explicit checkpoint evidence. Preserve custom goals and constraints;
+  unknown text must not be reported as verified.
 - `reset` invalidates optional caches after reset or restore. Reads should be
   idempotent for the same emulator state; viewer inspection also invokes them.
 
@@ -55,6 +68,25 @@ and descriptions to 500. Action sets contain 1–255 unique IDs. Non-stop action
 advance 1–600 frames. Stop actions advance zero frames and press no buttons.
 Use `wait` while the game initializes or a transition has no actionable choices.
 Keep goal-completion checks separate from the model's opinion that it should stop.
+
+Reader suggestions preload **Settings → Agent → Objectives**, including during
+manual play. **Use game defaults** copies them into the draft; **Apply changes**
+activates the edit through the normal revision-checked settings update. It
+preserves ceilings, counters, and emulator state. Untouched reader suggestions
+refresh when a different ROM is loaded; customized objectives carry over.
+Agent startup can omit `--goal`/`--objectives` if its reader supplies defaults.
+Readers without defaults still require a user objective before agent activation.
+
+TypeScript readers can set an optional `AgentAction.availabilityKey`, a nonempty
+string of at most 128 characters identifying the action's semantic context.
+Keep action IDs stable and keys stable while that meaning is unchanged. For
+example, `press_a` to advance dialogue must have a different key from `press_a`
+to start an overworld interaction. Do not include frame numbers or partially
+printing text: those changes should not invalidate a still-applicable choice.
+Before execution, the runner compares this key as well as the current action's
+buttons, duration, execution type, and stop flag. A changed context discards the response and
+requests a fresh decision while continuous emulation continues. The discarded
+response still counts toward session limits and remains inspectable in the log.
 
 `GameStateData` can also include optional `decisionSupport`:
 
@@ -71,13 +103,42 @@ distances. A reader can delegate those calculations to an adjacent class under
 its own profile directory; the shared runner does not interpret game rules.
 Return at most 32 facts and 32 action IDs, with up to eight facts per ID and
 500 characters per fact. The binding keeps action facts only for the choices
-actually offered. Inputs are still bounded controller actions: supplying route
-facts does not choose a destination or execute a path.
+actually offered. Facts are advisory: supplying route evidence alone does not
+choose a destination or execute a path.
+
+### Optional destination execution
+
+A TypeScript reader can offer an action with `execution: "profile"`, empty
+`buttons`, a stable ID/context key, and a `frames` ceiling from 1 to 600.
+If Jev selects it, the runner calls `createExecution` once. Its `next()` reads
+fresh local state and returns either `{ done: false, buttons: [...] }` for one
+frame or `{ done: true, reason: "..." }` to stop. The runner validates every
+step, advances the emulator, enforces the ceiling, and adds four release frames.
+The reader has no write/advance capability or provider credentials.
+
+Keep the selected destination fixed. Replanning a mechanical route to that
+destination is allowed; substituting another target or choosing a recovery
+action is not. Stop for a dialogue, battle, changed map, or unavailable route
+so Jev can make the next choice. `finish(reason)` optionally retains bounded
+local outcome evidence. It runs once on completion or cancellation; pause,
+settings edits, reset, restore, and shutdown discard the active execution.
+Action records include actual frame ranges, state differences, and
+`executionReason`. The viewer labels these actions as destination executors.
+
+The optional `shouldWait` hook identifies mechanical settling that needs no
+decision, such as a walking animation. The runner advances neutral frames
+without calling Jev or vision, up to 600 frames between requests. After that
+ceiling it requests a fresh decision even if the reader still reports busy.
+It continues to enforce session time limits and cancellation. Do not use this
+hook to choose gameplay inputs or bypass a dialogue that requires a choice.
+Readers without these hooks retain the existing controller loop; declarative
+JSON profiles do not provide executable code.
 
 `GameReaderMemory` always supplies `readMemory`. Its optional `readRom` capability
 returns a copy of a slice of the loaded cartridge by absolute byte offset,
 independent of the CPU's current ROM bank. The Game Boy adapter bounds each
-slice to 16 KiB and validates the cartridge bounds. Use this to decode tables
+slice to 16 KiB and validates the cartridge bounds. `romByteLength` supplies
+optional cartridge-size metadata for validating table access. Use this to decode tables
 from the user's own ROM rather than bundle extracted assets. No ROM bytes belong
 in observations, logs, or browser-facing data. Memory-only adapters remain valid;
 mark unsupported mechanics as unknown instead of inventing legality.
@@ -139,6 +200,10 @@ with `--vision none|gateway|mock`; a disabled visual provider requires no key.
 
 The schema requires `schemaVersion: 1`, `id`, `name`, `consoleId`, an array of
 supported `romSha256` values, and `fields`. Profiles are at most 128 KiB.
+Optional `defaultObjectives` uses `{ "goal": "...", "constraints": [],
+"milestones": [] }`. Goals are limited to 2,000 characters; the lists allow at
+most 16 nonempty entries of 500 characters each. They describe desired outcomes,
+not automatically verified achievements.
 Addresses and masks accept integers or hexadecimal strings such as `"0xC000"`.
 The viewer's `/api/status` includes the loaded ROM hash.
 

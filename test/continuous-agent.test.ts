@@ -32,7 +32,7 @@ test("continuous ticks advance through vision and Jev, retain one snapshot, and 
   const readFrames: number[] = [];
   class Reader extends DemoGameReader {
     override availableActions(state: GameState, actions: readonly AgentAction[]) {
-      readFrames.push(state.frame); return super.availableActions(state, actions);
+      readFrames.push(state.frame); return super.availableActions(state, actions).map(action => ({ ...action, availabilityKey: "stable-scene" }));
     }
   }
   const visual = deferred<VisualObservation>(), chosen = deferred<Decision>();
@@ -108,18 +108,22 @@ test("obsolete reader actions are discarded without pausing or substituting inpu
   } finally { session.stop("Test finished."); emulator.dispose(); }
 });
 
-test("a stable action ID cannot replace the inputs or duration Jev was offered", async () => {
-  for (const change of ["buttons", "frames"] as const) {
+test("a stable action ID cannot replace the inputs, duration, or semantic context Jev was offered", async () => {
+  for (const change of ["buttons", "frames", "context"] as const) {
     const emulator = new TrackingEmulator(createDemoRom());
     emulator.advance({ buttons: [], frames: 12 }); emulator.inputs.length = 0;
     class Reader extends DemoGameReader {
       override availableActions(state: GameState, actions: readonly AgentAction[]) {
-        return super.availableActions(state, actions).map((action) => state.frame >= 16 && action.id === "press_right" ?
-          { ...action, ...(change === "buttons" ? { buttons: ["LEFT"] } : { frames: 4 }) } : action);
+        return super.availableActions(state, actions).map((action) => {
+          if (action.id !== "press_right") return action;
+          if (change === "context") return { ...action, availabilityKey: state.frame >= 16 ? "overworld-interaction" : "advance-dialogue" };
+          return state.frame >= 16 ? { ...action, ...(change === "buttons" ? { buttons: ["LEFT"] } : { frames: 4 }) } : action;
+        });
       }
     }
     const chosen = deferred<Decision>(), started = deferred<void>();
-    const session = new AgentSession(emulator, { mode: "mock", objectives, budget: budget(), actionFrames: 8, maxDecisions: 3, maxSeconds: 60,
+    const records: unknown[] = [];
+    const session = new AgentSession(emulator, { mode: "mock", objectives, budget: budget(), actionFrames: 8, maxDecisions: 3, maxSeconds: 60, record: event => records.push(event),
       observer: createStateObserver(bindGameReader(new Reader(), emulator, 8)),
       decider: { decide() { started.resolve(); return chosen.promise; } },
     });
@@ -128,6 +132,8 @@ test("a stable action ID cannot replace the inputs or duration Jev was offered",
       chosen.resolve(decision("press_right")); await session.waitForPending();
       assert.equal(session.snapshot.state, "idle"); assert.ok(emulator.inputs.every((action) => action.buttons.length === 0));
       assert.match(session.inspection.exchange!.warnings[0]!, /no longer available/);
+      assert.equal(session.snapshot.decisions, 1); assert.equal(session.advancing, true);
+      if (change === "context") assert.match(JSON.stringify(records), /Action semantic context changed/);
     } finally { session.stop("Test finished."); emulator.dispose(); }
   }
 });

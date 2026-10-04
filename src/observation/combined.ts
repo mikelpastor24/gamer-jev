@@ -4,6 +4,9 @@ import type { ObservationProvider, VisionProvider } from "../core/agent.js";
 export function withVision(state: ObservationProvider, vision: VisionProvider): ObservationProvider {
   return { kind: "vision", ...(state.availableActions ? { availableActions: (frame) => state.availableActions!(frame) } : {}),
     ...(state.readSnapshot ? { readSnapshot: (frame) => state.readSnapshot!(frame) } : {}),
+    ...(state.createExecution ? { createExecution: (action) => state.createExecution!(action) } : {}),
+    ...(state.shouldWait ? { shouldWait: (frame) => state.shouldWait!(frame) } : {}),
+    setObjectives(objectives) { state.setObjectives?.(objectives); },
     reset() { state.reset?.(); }, setActionFrames(frames) { state.setActionFrames?.(frames); }, async observe(frame, previous, objectives, signal) {
     const local = await state.observe(frame, previous, objectives, signal);
     signal.throwIfAborted();

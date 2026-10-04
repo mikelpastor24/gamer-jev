@@ -10,5 +10,5 @@ export const POKEMON_RED_BLUE_LAYOUT: GenerationOneLayout = Object.freeze({
   mapHeight: 0xd368, mapWidth: 0xd369, facing: 0xc109, movementMode: 0xd700,
   statusFlags5: 0xd730, statusFlags6: 0xd732,
   battleKind: 0xd057, battleType: 0xd05a, battleMon: 0xd014, battleNick: 0xd009,
-  enemyMon: 0xcfe5, enemyNick: 0xcfda,
+  enemyMon: 0xcfe5, enemyNick: 0xcfda, fontLoaded: 0xcfc4,
 });

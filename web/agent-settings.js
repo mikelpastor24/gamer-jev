@@ -18,11 +18,33 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
   let providers;
   let activeProviders = {};
   let modelDrafts = {};
+  let defaultObjectives = null;
   const form = query("#agent-settings-form");
   const fields = query("#agent-settings-fields");
   const apply = query("#apply-agent-settings");
   const reload = query("#reload-agent-settings");
   const unlimited = query("#agent-unlimited");
+  const useDefaults = query("#use-game-objectives");
+
+  function fillObjectives(objectives) {
+    query("#agent-goal-input").value = objectives.goal;
+    query("#agent-constraints-input").value = objectives.constraints.join("\n");
+    query("#agent-milestones-input").value = objectives.milestones.join("\n");
+    updateObjectiveSource();
+  }
+  function updateObjectiveSource() {
+    const lines = (selector) => query(selector).value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const suggested = defaultObjectives && query("#agent-goal-input").value.trim() === defaultObjectives.goal &&
+      JSON.stringify(lines("#agent-constraints-input")) === JSON.stringify(defaultObjectives.constraints) &&
+      JSON.stringify(lines("#agent-milestones-input")) === JSON.stringify(defaultObjectives.milestones);
+    query("#game-objectives-source").textContent = !defaultObjectives ? "Set objectives for this game." : suggested ?
+      "Game reader suggestions. Edit any field to customize them." : "Custom objectives. Game reader suggestions are available.";
+  }
+  useDefaults.addEventListener("click", () => {
+    if (loading || !defaultObjectives || revision === null) return;
+    fillObjectives(defaultObjectives); dirty = true;
+    message("Game objectives copied to the draft. Apply changes to use them.");
+  });
 
   function setSection(name) {
     query("#agent-settings-section").value = name;
@@ -85,7 +107,7 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
     } else limits.forEach(([, selector, fallback], index) => { query(selector).value = boundedValues[index] ?? String(fallback); });
     updateLimitInputs();
   });
-  form.addEventListener("input", () => { dirty = true; });
+  form.addEventListener("input", () => { dirty = true; updateObjectiveSource(); });
 
   async function load() {
     if (loading) return;
@@ -102,9 +124,9 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
       gameId = result.gameId ?? 0;
       const settings = result.settings ?? { ...result.defaults, objectives: { goal: "", constraints: [], milestones: [] } };
       revision = result.revision;
-      query("#agent-goal-input").value = settings.objectives.goal;
-      query("#agent-constraints-input").value = settings.objectives.constraints.join("\n");
-      query("#agent-milestones-input").value = settings.objectives.milestones.join("\n");
+      defaultObjectives = result.defaultObjectives ?? null;
+      useDefaults.hidden = !defaultObjectives;
+      fillObjectives(settings.objectives);
       for (const [name, selector] of limits) query(selector).value = settings[name] ?? "";
       boundedValues = limits.map(([name, , fallback]) => String(settings[name] ?? fallback));
       unlimited.checked = limits.every(([name]) => settings[name] === null);
@@ -159,7 +181,7 @@ export function createAgentSettingsEditor({ request, onApply, message }) {
     finally { if (current === generation) { loading = false; fields.disabled = revision === null; apply.disabled = revision === null; reload.disabled = false; } }
   });
   return { reset() {
-    generation++; revision = null; gameId = 0; dirty = false; loading = false;
+    generation++; revision = null; gameId = 0; dirty = false; loading = false; defaultObjectives = null; useDefaults.hidden = true;
     fields.disabled = true; apply.disabled = true; reload.disabled = false; form.reset(); setSection("models");
     if (!query("#settings-agent").hidden) void load();
   } };

@@ -5,6 +5,7 @@ import { hasMemory, hasRom } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
 import type { DiagnosticSink } from "../core/diagnostics.js";
+import { parseObjectives } from "../config/objectives.js";
 
 
 function validateDescriptor(descriptor: GameReaderDescriptor): void {
@@ -22,14 +23,24 @@ export function bindGameReader(reader: GameReader, emulator: Emulator, actionFra
   }
   if (!hasMemory(emulator)) throw new Error("This console adapter does not support memory-based game readers.");
   let defaults = controllerActions(emulator.descriptor.buttons, actionFrames);
+  const objectives = reader.defaultObjectives === undefined ? undefined : parseObjectives(reader.defaultObjectives);
   const memory = Object.freeze({ readMemory: (address: number, length: number) => emulator.readMemory(address, length),
-    ...(hasRom(emulator) ? { readRom: (offset: number, length: number) => emulator.readRom(offset, length) } : {}) });
+    ...(hasRom(emulator) ? { readRom: (offset: number, length: number) => emulator.readRom(offset, length), romByteLength: emulator.rom.byteLength } : {}) });
   let previous = "";
   diagnostics?.({ component: "game-reader", level: "info", event: "bound", frame: emulator.frameNumber,
     data: { reader: reader.descriptor.id, console: reader.descriptor.consoleId, romSha256: emulator.rom.sha256 } });
-  return { id: reader.descriptor.id, setActionFrames(frames) {
+  return { id: reader.descriptor.id, get defaultObjectives() { return objectives ? structuredClone(objectives) : undefined; }, setActionFrames(frames) {
     defaults = controllerActions(emulator.descriptor.buttons, frames);
-  }, reset() {
+  },
+  ...(reader.setObjectives ? { setObjectives: (value) => reader.setObjectives!(parseObjectives(value, true)) } : {}),
+  ...(reader.createExecution ? { createExecution: (action) => reader.createExecution!(memory, structuredClone(action)) } : {}),
+  ...(reader.shouldWait ? { shouldWait: (frame) => {
+    if (frame.number !== emulator.frameNumber) throw new Error("Cannot check control for a stale emulator frame.");
+    const busy = reader.shouldWait!(reader.readState(memory), frame.number);
+    if (typeof busy !== "boolean") throw new Error("Invalid reader settling status.");
+    return busy;
+  } } : {}),
+  reset() {
     previous = "";
     reader.reset?.();
     diagnostics?.({ component: "game-reader", level: "info", event: "reset", frame: emulator.frameNumber, data: { reader: reader.descriptor.id } });

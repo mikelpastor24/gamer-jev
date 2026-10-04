@@ -23,11 +23,12 @@ function decision(actionId: string): Decision {
   return { actionId, model: "test-jev", confidence: 0.7, probabilities: {}, usage: { inputTokens: 2, outputTokens: 1 } };
 }
 
-test("agent CLI requires objectives, rejects conflicting inputs, and validates objective files", () => {
+test("agent CLI permits reader defaults, rejects conflicting inputs, and validates objective files", () => {
   const options = parseCliOptions(["--demo", "--agent", "mock", "--goal", "Test", "--headless", "--decisions", "3"]);
   assert.equal(options.frames, 1_000_000);
   assert.equal(options.decisions, 3);
-  for (const suffix of [["--agent", "unknown"], ["--agent", "mock"], ["--goal", "Test"],
+  assert.equal(parseCliOptions(["--demo", "--agent", "mock"]).goal, undefined);
+  for (const suffix of [["--agent", "unknown"], ["--agent", "mock", "--goal", " "], ["--goal", "Test"],
     ["--agent", "mock", "--goal", "Test", "--objectives", "goals.json"],
     ["--agent", "mock", "--goal", "Test", "--headless", "--buttons", "A"], ["--decisions", "5"]]) {
     assert.throws(() => parseCliOptions(["--demo", ...suffix]));

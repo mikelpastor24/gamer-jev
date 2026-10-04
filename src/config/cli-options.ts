@@ -92,7 +92,8 @@ export function parseCliOptions(args: string[]): CliOptions {
     if (values.vision !== undefined && values.observation !== undefined &&
         ((values.vision === "none") !== (values.observation === "state"))) throw new Error("--vision conflicts with --observation. Use none with state, or a vision provider with vision.");
     if (values.profile !== undefined && !values.profile.trim()) throw new Error("--profile requires a registered ID or JSON file path.");
-    if (values.agent && Boolean(values.goal) === Boolean(values.objectives)) throw new Error("Agent mode requires exactly one of --goal <text> or --objectives <path>.");
+    if (values.goal !== undefined && values.objectives !== undefined) throw new Error("Use --goal or --objectives, rather than combining them.");
+    if (values.goal !== undefined && !values.goal.trim() || values.objectives !== undefined && !values.objectives.trim()) throw new Error("Supply a nonempty --goal or --objectives value.");
     if (values.agent && values.buttons !== undefined) throw new Error("--buttons cannot be combined with agent mode.");
     if (!values.agent && (values.unlimited || values.goal !== undefined || values.objectives !== undefined || args.some((arg) => /^--(decisions|requests|max-seconds|action-frames)(=|$)/.test(arg)))) {
       throw new Error("Objectives and agent limits require --agent typesafe, --agent gateway, or --agent mock.");
@@ -159,7 +160,7 @@ export const CLI_HELP = `Usage: npm start
                       Default: mock with a mock agent, otherwise gateway
   --observation <id>   Compatibility option: state disables vision; vision enables it
   --profile <id/path>  Registered game reader or a JSON memory profile
-  --goal <text>        Primary objective for the agent
+  --goal <text>        Primary objective; otherwise use the game reader's defaults
   --objectives <path>  JSON objectives instead of --goal
   --decisions <count>  Agent decision limit, or unlimited (default: 100)
   --requests <count>   Combined vision/Jev attempt limit, or unlimited (default: 300)

@@ -41,8 +41,9 @@ shared English Gen I decoding from exact Pokémon Red, Blue, and Yellow ROM hash
 Red/Blue share a verified layout; Yellow has its own addresses. Startup, naming,
 the starting room, and overworld menus were checked locally for all three;
 party/battle decoding uses synthetic RAM tests. Other Pokémon revisions and
-generations, complete field mechanics, full-game competence, and verified progress checks
-remain future work.
+generations, complete field mechanics, full-game competence, and verified
+full-objective completion remain future work. Named story checkpoints and
+coarse map connectivity are implemented below, with narrower evidence.
 
 Readers can return bounded optional `decisionSupport` facts and per-action facts.
 The Pokemon reader delegates these to `GenerationOneDecisionSupport` inside its
@@ -54,9 +55,69 @@ four immutable ROM banks, clear on reset/restore, and recalculate live routes.
 Yellow collision tables use bank 1, unlike Red/Blue's fixed bank. Preserve unknown
 surfing/Strength controls and warp-underfoot triggers. The reader distinguishes
 turning from walking, waits during live movement, and excludes confirmed blocked
-walking. Route facts never select a goal, execute a path, or verify completion.
-Local mechanical routes from the house floors into Pallet Town were checked for
-all three revisions; synthetic tests cover legality and timing boundaries.
+walking. Route facts alone never select a goal, execute a path, or verify completion.
+Local mechanical routes from the house floors into Pallet Town and through
+Oak's encounter into his lab were checked for all three revisions using an
+offline fixture decider, without paid requests or changing the original saves.
+Synthetic tests cover legality, timing, interruption, and frame ceilings.
+
+Readers optionally implement `setObjectives`, `createExecution`, and `shouldWait`.
+An offered `execution: "profile"` action has no fixed buttons and a 1–600-frame
+ceiling. Only Jev selects it. Its read-only executor emits one validated frame
+step at a time toward the same target; the runner owns advancement, the ceiling,
+and four release frames. Never substitute another target or recovery action.
+Pause/settings/reset/restore/shutdown cancel execution, with one finish callback.
+Records include actual frames and execution reasons. Local settling skips both
+Jev and vision for at most 600 neutral frames between requests, then asks again;
+session limits and cancellation still apply. These hooks propagate through state
+and optional vision observers without game-specific code in the runtime.
+
+Pokemon destination actions cover up to 20 local exits/boundaries/objects/signs.
+Their executor retains the selected ID/context, waits for walking, sends one
+interaction pulse, and stops for map change, dialogue/battle/menu, ignored controls,
+unreachable targets, 120 frames without movement, or its ceiling. After map changes
+the reader settles 60 frames. Target feedback retains at most 32 contexts and
+best distances: repeating an earlier partial approach is not new navigation
+progress. Reset/restore, objective edits, and relevant story/item/party evidence
+invalidate that feedback. No sampled fallback, checkpoint rescue, or hidden
+controller decision may be added.
+
+Adjacent warp entries with the same destination share a route. Decode automatic
+warp tile lists from the cartridge's revision-specific `WarpTileIDPointers`
+before exposing facing-edge triggers; stairs are not edge exits. Mark the
+applicable outward direction `exit_trigger`, retaining bounded controller inputs.
+Sideways movement between equivalent exit mats does not activate the boundary
+exit. Preserve attempts for unknown/special warp rules. The latest Red checkpoint
+at the ground-floor mats and house routes for Blue/Yellow were checked locally.
+
+Readers may expose validated optional `defaultObjectives`; JSON profiles use
+the same property. Preload these in manual/agent Settings and allow CLI agent
+startup without objectives only when reader defaults exist. Pokemon supplies
+16 editable story milestones, with Yellow's distinct starter guidance. The
+Settings `Use game defaults` button edits the draft; normal Apply validates
+the revision and pauses/cancels work. Preserve user edits and session ceilings
+across ROM changes; refresh unchanged reader suggestions for the new reader.
+`PokemonStoryProgress` interprets exact default milestone strings that remain
+in the supplied objectives and reports `activeMilestone`, its goal/map, and
+`completedStoryChecks`. Checks use named events, badges, full bag item IDs, and
+an explicit session-local Lavender arrival checkpoint; they do not verify every
+instruction, team preparation, custom prose, or full-objective completion.
+Opening event bits 0/34/35/57/37 identify Oak, starter, rival, parcel, and Pokedex.
+The hideout boss flag alone does not prove the Silph Scope was collected.
+Coarse map graph candidates come from revision-specific cartridge header tables,
+not bundled assets; map connectivity does not establish region/gate reachability.
+Preserve all user constraints and leave target selection to Jev.
+
+`PokemonInteractionMemory` keeps at most 32 map/position/facing interaction
+records and eight recent text fragments per active dialogue. It exposes bounded
+text and counts after a live bottom dialogue box/font flag returns to the
+overworld. Duplicate reads do not increment counts; menus/transitions do not
+close dialogues. Compare observed durable decoded fields and 320 event-flag
+bytes, keeping raw flags local. Warn that A starts another interaction after
+an unchanged dialogue, but retain A and avoid claiming verified progress or
+actor identity. Tracked state changes invalidate the warning. Reset/restore
+and history resets clear this memory; emulator checkpoints do not persist it.
+The saved Red mother conversation was replayed locally without provider calls.
 
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
@@ -99,14 +160,20 @@ pending observation/decision. Recheck local reader action availability before
 execution; discard obsolete actions and request a fresh decision without pausing,
 while counting their responses toward limits. Record observation and execution
 frames separately. Headless requests retain deterministic frame counts.
+Optional action `availabilityKey` strings (1-128 characters) distinguish meaning
+changes even when IDs/buttons/durations match. Gen I keys distinguish phases,
+overworld positions/facing, menu/naming context, and dialogue episodes without
+invalidating responses for partially printed text. Record old/current keys on
+discard; keep the decision attributable to Jev and request fresh state.
 Speed edits preserve pending agent work,
 action durations, and pause state, and invalidate queued audio on both ends.
 
 Settings → ROMs loads regular .gb/.gbc files from the local roms/ folder, capped
 at 8 MiB and 256 catalog entries. Reject traversal and symlinks. Validate a fresh
 runtime before replacing the current cartridge, save the previous checkpoint,
-cancel stale work, and start the new game paused. Preserve applied agent settings
-and provider choices; reset session counters, timers, history, and inspection.
+cancel stale work, and start the new game paused. Preserve custom objectives,
+session ceilings, and provider choices; refresh unchanged reader suggestions.
+Reset session counters, timers, history, and inspection.
 `src/runner/game-runtime.ts` owns per-cartridge readers, providers, logs, and
 cleanup. Checkpoints after switching are isolated by console and ROM hash.
 Guard browser commands and inspection against stale game IDs. Never expose
@@ -210,8 +277,9 @@ decisions around selecting from explicitly supplied actions.
 
 ## Objectives and Session Records
 
-- Load objectives from user configuration or a separate file, rather than source
-  code. Support a primary goal and optional constraints or milestones.
+- Load explicit objectives from user configuration or a separate file. Optional
+  editable defaults belong to game profiles, outside the shared runtime. Support
+  a primary goal and optional constraints or milestones.
 - Distinguish a stated objective from evidence of completion. Use explicit progress
   checks when available and clearly identify unverified or manual completion.
 - Record enough information to inspect a run: observations, candidate actions,

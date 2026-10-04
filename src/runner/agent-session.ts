@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ActionRecord, AgentAction, AgentSettings, Decision, DecisionExchange, DecisionProvider, DecisionProviderId, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
+import type { ActionRecord, AgentAction, AgentSettings, Decision, DecisionExchange, DecisionProvider, DecisionProviderId, GameActionExecution, GameState, Objectives, ObservationProvider, VisionProviderId } from "../core/agent.js";
 import type { Emulator, Frame } from "../core/emulator.js";
 import { controllerActions, validateAgentActions } from "../core/actions.js";
 import { validateGameState } from "../core/game-state.js";
@@ -31,7 +31,9 @@ export class AgentSession {
   private generation = 0;
   private controller: AbortController | undefined;
   private pending: Promise<void> | undefined;
-  private active: { action: AgentAction; fromFrame: number; remaining: number; release: number; screenHash: string; beforeState: GameState | undefined } | undefined;
+  private active: { action: AgentAction; fromFrame: number; remaining: number; release: number; screenHash: string; beforeState: GameState | undefined;
+    execution?: GameActionExecution; executionReason?: string } | undefined;
+  private settlingFrames = 0;
   private history: ActionRecord[] = [];
   private readonly feedback = new AgentFeedbackTracker();
   private previous: Frame | undefined;
@@ -59,6 +61,7 @@ export class AgentSession {
     this.settings = parseAgentSettings({ objectives: options.objectives, maxDecisions: options.maxDecisions,
       maxSeconds: options.maxSeconds, maxRequests: options.budget.limits.maxRequests, actionFrames: options.actionFrames });
     this.actions = controllerActions(emulator.descriptor.buttons, options.actionFrames);
+    options.observer.setObjectives?.(this.settings.objectives);
     this.visionProvider = options.visionProvider ?? (options.observer.kind === "state" ? "none" : options.mode === "mock" ? "mock" : "gateway");
     this.scheduleDeadline();
     this.record({ type: "session", mode: options.mode, visionProvider: this.visionProvider,
@@ -99,6 +102,7 @@ export class AgentSession {
     this.options = { ...this.options, ...providers };
     this.visionProvider = providers.visionProvider ?? "none";
     this.options.observer.setActionFrames?.(this.settings.actionFrames);
+    this.options.observer.setObjectives?.(this.settings.objectives);
     this.record({ type: "session-providers", mode: this.options.mode, visionProvider: this.visionProvider,
       frame: this.emulator.frameNumber, decisions: this.decisions, requests: this.options.budget.requests });
   }
@@ -111,6 +115,7 @@ export class AgentSession {
     this.options.observer.setActionFrames?.(next.actionFrames);
     this.cancelActive();
     this.settings = next; this.actions = actions; this.settingsRevision++;
+    this.options.observer.setObjectives?.(next.objectives);
     this.options.budget.setMaxRequests(next.maxRequests);
     this.state = "paused"; this.reason = null;
     this.observation = ""; this.gameState = undefined; this.decision = undefined;
@@ -168,8 +173,26 @@ export class AgentSession {
     if (this.settings.maxSeconds !== null && Date.now() - this.startedAt >= this.settings.maxSeconds * 1000) { this.stop("Session time limit reached."); return; }
     if (this.active) {
       const active = this.active;
-      const held = Math.min(frames, active.remaining);
-      if (held) { this.emulator.advance({ buttons: active.action.buttons, frames: held }); active.remaining -= held; frames -= held; }
+      if (active.execution) {
+        try {
+          while (frames && active.remaining) {
+            const step = active.execution.next();
+            if (!step || typeof step.done !== "boolean") throw new Error("Invalid profile execution step.");
+            if (step.done) {
+              if (typeof step.reason !== "string" || !step.reason.trim() || step.reason.length > 256) throw new Error("Invalid profile execution outcome.");
+              active.executionReason = step.reason; active.remaining = 0; break;
+            }
+            validateAgentActions([{ id: "execution_step", description: "Profile execution step.", buttons: step.buttons, frames: 1, stop: false }], this.emulator.descriptor.buttons);
+            this.emulator.advance({ buttons: step.buttons, frames: 1 }); active.remaining--; frames--;
+          }
+          if (!active.remaining && !active.executionReason) active.executionReason = "Profile action frame ceiling reached.";
+        } catch {
+          this.stop("Profile action execution failed.", true); return;
+        }
+      } else {
+        const held = Math.min(frames, active.remaining);
+        if (held) { this.emulator.advance({ buttons: active.action.buttons, frames: held }); active.remaining -= held; frames -= held; }
+      }
       const released = Math.min(frames, active.release);
       if (released) { this.emulator.advance({ buttons: [], frames: released }); active.release -= released; frames -= released; }
       if (!active.remaining && !active.release) {
@@ -185,6 +208,18 @@ export class AgentSession {
     }
     const exhausted = this.exhaustedLimit();
     if (exhausted) { this.stop(exhausted); return; }
+    if (this.options.observer.shouldWait && this.settlingFrames < 600) {
+      try {
+        if (this.options.observer.shouldWait(this.emulator.captureFrame())) {
+          const neutral = Math.min(frames, 600 - this.settlingFrames);
+          if (!neutral) return;
+          this.emulator.advance({ buttons: [], frames: neutral }); this.settlingFrames += neutral;
+          return;
+        }
+      } catch { this.stop("Game reader settling check failed.", true); return; }
+    }
+    if (this.settlingFrames) this.diagnose("debug", "local-settle-completed", { frames: this.settlingFrames });
+    this.settlingFrames = 0;
     const generation = this.generation;
     this.controller = new AbortController();
     const signal = this.controller.signal;
@@ -255,12 +290,16 @@ export class AgentSession {
       const current = snapshot?.actions ?? this.options.observer.availableActions?.(executionFrame) ?? actions;
       validateAgentActions(current, this.emulator.descriptor.buttons);
       const available = current.find((candidate) => candidate.id === action.id);
-      if (!available || available.stop !== action.stop || available.frames !== action.frames ||
+      const contextChanged = available !== undefined && available.availabilityKey !== action.availabilityKey;
+      if (!available || contextChanged || available.stop !== action.stop || available.frames !== action.frames ||
+          available.execution !== action.execution ||
           available.buttons.length !== action.buttons.length || !available.buttons.every((button) => action.buttons.includes(button))) {
         const warning = `Action ${action.id} is no longer available at frame ${this.emulator.frameNumber}. Its response was discarded; a fresh decision is needed.`;
         this.updateExchange({ warnings: [...this.exchange!.warnings, warning].slice(-8) });
         this.completedExchange = this.exchange;
-        const data = { actionId: action.id, observedFrame: frame.number, currentFrame: this.emulator.frameNumber, reason: "Action availability changed." };
+        const data = { actionId: action.id, observedFrame: frame.number, currentFrame: this.emulator.frameNumber,
+          reason: contextChanged ? "Action semantic context changed." : "Action availability changed.",
+          ...(contextChanged ? { observedAvailabilityKey: action.availabilityKey ?? null, currentAvailabilityKey: available.availabilityKey ?? null } : {}) };
         this.record({ type: "decision-discarded", ...data });
         this.diagnose("info", "decision-discarded", data);
         this.state = "idle";
@@ -270,8 +309,12 @@ export class AgentSession {
       }
     }
     if (action.stop) { this.stop("Jev requested stop. Objective completion is unverified."); return; }
+    const execution = action.execution === "profile" ? this.options.observer.createExecution?.(action) : undefined;
+    if (action.execution && !execution) throw new AgentFailure("The offered profile action has no executor.");
+    if (execution && (typeof execution.next !== "function" || execution.finish !== undefined && typeof execution.finish !== "function")) throw new AgentFailure("Invalid profile action executor.");
     this.active = { action, fromFrame: executionFrame.number, remaining: action.frames, release: action.buttons.length ? 4 : 0,
-      screenHash: createHash("sha256").update(executionFrame.pixels).digest("hex"), beforeState };
+      screenHash: createHash("sha256").update(executionFrame.pixels).digest("hex"), beforeState,
+      ...(execution ? { execution, release: 4 } : {}) };
     this.state = "acting";
     this.diagnose("info", "action-started", { actionId: action.id, buttons: action.buttons,
       frames: action.frames, releaseFrames: this.active.release, observedFrame: frame.number, executionFrame: this.active.fromFrame });
@@ -279,6 +322,9 @@ export class AgentSession {
 
   private finishAction(interrupted: boolean): void {
     if (!this.active) return;
+    const executionReason = interrupted ? "Profile action cancelled." : this.active.executionReason;
+    try { this.active.execution?.finish?.(executionReason ?? "Profile action completed."); }
+    catch { this.diagnose("warn", "execution-feedback-failed", { actionId: this.active.action.id }); }
     let result: ActionRecord["result"];
     if (!interrupted) {
       const frame = this.emulator.captureFrame();
@@ -288,7 +334,8 @@ export class AgentSession {
         this.active.beforeState, snapshot?.state);
     }
     const record: ActionRecord = { actionId: this.active.action.id, fromFrame: this.active.fromFrame,
-      toFrame: this.emulator.frameNumber, observation: this.observation.slice(0, 1500), interrupted, ...(result ? { result } : {}) };
+      toFrame: this.emulator.frameNumber, observation: this.observation.slice(0, 1500), interrupted, ...(result ? { result } : {}),
+      ...(this.active.execution && executionReason ? { executionReason } : {}) };
     this.history.push(record);
     this.history = this.history.slice(-12);
     this.record({ type: "action", ...record });
@@ -298,6 +345,7 @@ export class AgentSession {
   private cancelActive(): void {
     if (this.exchange?.status === "pending") this.updateExchange({ status: "cancelled", error: "Decision request cancelled. Its response will not be executed." });
     this.generation++; this.controller?.abort();
+    this.settlingFrames = 0;
     this.finishAction(true); this.active = undefined;
   }
 

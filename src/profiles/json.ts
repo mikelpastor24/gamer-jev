@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import type { GameReader, GameReaderDescriptor, GameStateData } from "../core/game-reader.js";
-import type { AgentAction, GameState, StateValue } from "../core/agent.js";
+import type { AgentAction, GameState, Objectives, StateValue } from "../core/agent.js";
 import type { MemoryReader } from "../core/emulator.js";
+import { parseObjectives } from "../config/objectives.js";
 
 type FieldType = "u8" | "i8" | "u16le" | "u16be" | "flag" | "enum";
 interface Field { name: string; description: string; address: number; type: FieldType; mask: number; labels: Readonly<Record<string, string>> }
@@ -28,7 +29,8 @@ function array(value: unknown, minimum: number, maximum: number): unknown[] {
 
 /** Declarative Strategy implementation for simple byte, word, flag, and enum layouts. */
 export class JsonGameReader implements GameReader {
-  constructor(readonly descriptor: GameReaderDescriptor, private readonly fields: readonly Field[], private readonly rules: readonly ActionRule[] | undefined) {}
+  constructor(readonly descriptor: GameReaderDescriptor, private readonly fields: readonly Field[], private readonly rules: readonly ActionRule[] | undefined,
+    readonly defaultObjectives?: Objectives) {}
 
   readState(memory: MemoryReader): GameStateData {
     const values: Record<string, StateValue> = {};
@@ -68,7 +70,7 @@ export class JsonGameReader implements GameReader {
 }
 
 export function parseJsonGameReader(value: unknown): GameReader {
-  const root = record(value, ["schemaVersion", "id", "name", "consoleId", "romSha256", "fields", "actions"]);
+  const root = record(value, ["schemaVersion", "id", "name", "consoleId", "romSha256", "fields", "actions", "defaultObjectives"]);
   if (root.schemaVersion !== 1) throw new Error("Unsupported game-profile schema version.");
   const descriptor: GameReaderDescriptor = { id: text(root.id, 64), name: text(root.name, 100), consoleId: text(root.consoleId, 64),
     romSha256: array(root.romSha256, 1, 32).map((hash) => text(hash, 64)) };
@@ -115,7 +117,7 @@ export function parseJsonGameReader(value: unknown): GameReader {
     });
     return { id, description: text(entry.description), buttons: array(entry.buttons, 0, 32).map((button) => text(button, 64)), frames, when };
   });
-  return new JsonGameReader(descriptor, fields, rules);
+  return new JsonGameReader(descriptor, fields, rules, root.defaultObjectives === undefined ? undefined : parseObjectives(root.defaultObjectives));
 }
 
 export async function loadJsonGameReader(path: string): Promise<GameReader> {

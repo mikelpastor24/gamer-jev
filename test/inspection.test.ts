@@ -11,10 +11,31 @@ import { DemoGameReader } from "../src/profiles/demo.js";
 import { createStateObserver } from "../src/observation/state.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { startViewer } from "../src/server/viewer.js";
+import { evaluationRequest } from "../src/jev/evaluation.js";
 
 const secret = "private-inspection-key";
 const limits = () => new RequestBudget({ maxRequests: 5, timeoutMs: 1000, intervalMs: 0, retries: 0 });
 const objectives = { goal: "Inspect the fixture", constraints: [`Protect ${secret}`], milestones: [] };
+
+test("compact Jev requests preserve semantic state and action outcomes while retaining independent visual evidence", () => {
+  const context: DecisionContext = { objectives, console: "fixture", frame: 42,
+    observation: `Structured game state from fixture (full values in gameState): ${"duplicated evidence".repeat(250)}`,
+    gameState: { source: "fixture", frame: 42, values: { activeMilestone: "reach_target", targetDistance: 4 },
+      descriptions: { targetDistance: "Remaining local steps" }, decisionSupport: { facts: ["A target is reachable."], actionFacts: {} } },
+    unchangedScreens: 0, actions: [{ id: "approach_target", description: "Approach the supplied target", buttons: [], frames: 600, stop: false, execution: "profile" }],
+    history: Array.from({ length: 12 }, (_, index) => ({ actionId: "approach_target", fromFrame: index, toFrame: index + 1,
+      observation: "Old structured evidence ".repeat(60), interrupted: false, executionReason: "Map changed.",
+      result: { frame: index + 1, screenChanged: true, stateChanged: true, changedFieldCount: 1,
+        changes: [{ field: "targetDistance", before: 5, after: 4 }] } })) };
+  const request = evaluationRequest(context, "fixture");
+  assert.deepEqual(request.state.gameState, context.gameState);
+  assert.deepEqual(request.state.objectives, context.objectives); assert.deepEqual(request.state.actions, context.actions);
+  assert.deepEqual(request.state.history.map(entry => entry.result), context.history.map(entry => entry.result));
+  assert.equal(request.state.history[0]!.executionReason, "Map changed.");
+  assert.ok(JSON.stringify(request).length < JSON.stringify(context).length / 2);
+  const visual = "The screenshot shows a transient warning that memory does not expose.";
+  assert.equal(evaluationRequest({ ...context, observation: visual }, "fixture").state.observation, visual);
+});
 
 test("both Jev adapters inspect the actual request and only supported response fields without exposing credentials", async () => {
   const context: DecisionContext = { objectives, console: "fixture", frame: 42, observation: "Menu",

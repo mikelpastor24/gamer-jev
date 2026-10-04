@@ -62,8 +62,8 @@ async function main(): Promise<void> {
         port: options.port, speed: options.speed, paused: options.paused, checkpointPath, runtime, launcher: options.launcher,
         gameState: runtime.gameState, dispose: runtime.dispose,
         ...(runtime.record ? { record: runtime.record } : {}), ...(session ? { agent: session } : {}),
-        async loadRom(bytes, settings, selection) {
-          const next = await createGameRuntime(bytes, options, settings, true, { ...(selection ? { selection } : {}), environment });
+        async loadRom(bytes, settings, selection, objectiveSource) {
+          const next = await createGameRuntime(bytes, options, settings, true, { ...(selection ? { selection } : {}), ...(objectiveSource ? { objectiveSource } : {}), environment });
           if (next.logPath) console.log(`Prepared cartridge session record: ${next.logPath}`);
           return next;
         },

@@ -8,6 +8,11 @@ export function validateAgentActions(actions: readonly AgentAction[], buttons: r
     if (!action || typeof action.id !== "string" || !/^[a-zA-Z][a-zA-Z0-9_:-]{0,63}$/.test(action.id) || ids.has(action.id)) throw new Error("Available actions require unique, stable identifiers of at most 64 characters.");
     ids.add(action.id);
     if (typeof action.description !== "string" || !action.description.trim() || action.description.length > 500 || typeof action.stop !== "boolean") throw new Error("Invalid available action description or stop flag.");
+    if (action.availabilityKey !== undefined && (typeof action.availabilityKey !== "string" ||
+        !action.availabilityKey.trim() || action.availabilityKey.length > 128)) throw new Error("Invalid action availability key.");
+    if (action.execution !== undefined && (action.execution !== "profile" || action.stop || !Array.isArray(action.buttons) || action.buttons.length)) {
+      throw new Error("Profile actions require a bounded executor and no fixed controller buttons.");
+    }
     if (action.stop) {
       if (action.frames !== 0 || !Array.isArray(action.buttons) || action.buttons.length) throw new Error("Stop actions cannot press buttons or advance frames.");
     } else {

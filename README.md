@@ -62,7 +62,8 @@ Restart the application after editing `.env`.
 Model fields start with `TYPESAFE_MODEL`, `JEV_MODEL`, or `VISION_MODEL` from `.env`
 and can be edited in the application. Jev remains a TypeSafe decision model;
 Gateway vision requires a model that supports image inputs. Set an objective
-in **Objectives**, optionally adjust **Limits**, and use **Apply changes**.
+in **Objectives**, or edit the suggestions preloaded by a compatible reader;
+optionally adjust **Limits**, and use **Apply changes**.
 Applying pauses the game and cancels pending work; close Settings and Resume.
 Switching modes, providers, or models preserves the cartridge, agent counters,
 request budget, and elapsed time. It clears recent history and inspection so
@@ -165,8 +166,21 @@ See [Pokémon readers](docs/pokemon-readers.md) for the supported hashes,
 decoded fields, limits, and extending the shared Gen I reader to other revisions.
 Pokémon readers also supply profile-owned decision facts: live walking collision,
 objects/signs, exits, and local route distances with the first available inputs.
-Jev chooses the destination and each action. Surfing and special field mechanics
-remain partial; decoded routes do not prove quest progress or full-game competence.
+They retain bounded recent text from completed conversations and warn when A
+would restart an interaction from the same position/facing without an observed
+change in tracked game state. This evidence does not automatically exclude
+repeat conversations or choose a destination.
+Adjacent entries for the same doorway share a route. Facing-edge exits describe
+the required outward input, so standing on a mat is not mistaken for completing
+the transition. Automatic stairs and special warp rules retain their own checks.
+Jev can select a destination action to walk to an exit or approach and interact
+with an object/sign. The profile executor retains that destination for up to
+600 frames, settling movement locally and stopping for interruptions, changed
+maps, or an unavailable route. It then returns control to Jev. Coarse map
+connectivity and the active recognized story checkpoint describe useful candidate
+destinations. Repeated partial approaches retain failed-attempt evidence.
+Surfing and special field mechanics remain partial; decoded routes do not prove
+quest progress or full-game competence.
 
 Open **Game state** in manual or agent mode to inspect live fields,
 descriptions, and available actions. `GET /api/game-state` exposes the same
@@ -188,6 +202,16 @@ duration, then release for four frames; readers can supply other valid button co
 The `wait` action advances without input; buttons are also released during model
 requests. Model latency delays the next controller input while the game continues.
 This loop is best suited to games that tolerate discrete control rather than fast reactions.
+Optional profile actions emit validated mechanical steps toward a model-selected
+target, within their frame ceiling plus four release frames. Optional local
+settling skips both model providers for up to 600 neutral frames between requests;
+it then asks again even if the game still reports busy. No alternative destination
+or recovery action is selected by the runtime.
+
+Readers can attach a semantic context key to actions. The Pokemon readers use
+it to discard a delayed A intended to advance dialogue if that conversation
+has already closed. The game continues while a fresh decision is requested;
+the obsolete response is recorded and still counts toward session ceilings.
 
 Recent history includes `result` for completed actions: execution-end frame,
 screen/state change flags, and up to 12 changed fields with bounded before/after
@@ -195,7 +219,10 @@ values. Jev also receives `feedback` over up to 32 observations: recurring state
 consecutive unchanged states/actions, repeated action cycles, and fields that
 remained stable across recent observations. Opening and closing a menu does not
 erase visits to the same earlier state. These are observed changes, not verified
-progress or collision information; Jev still selects every controller action.
+progress or collision information; Jev still selects every offered gameplay action.
+Destination executions also record their completion/interruption reason.
+Jev requests avoid duplicating memory state in the observation string and shorten
+historical observation text while retaining structured evidence and action results.
 
 To test the entire controller loop without keys, network access, or costs:
 
@@ -248,6 +275,18 @@ next request uses the new objective and action set. Profiles can still choose
 their own bounded action durations. Changes are recorded in the local JSONL log;
 the objectives file and browser storage are not rewritten.
 
+Readers may supply default objectives, constraints, and milestones. The Pokemon
+readers preload 16 editable story milestones, with separate starter guidance
+for Yellow. **Use game defaults** restores those fields in the draft without
+changing session ceilings; apply the draft to activate it. CLI `--goal` or
+`--objectives` takes precedence. Either flag can be omitted in agent mode when
+the selected reader supplies defaults. Other games still need a user objective.
+The Pokemon profile recognizes supplied default milestone text and exposes the
+first pending checkpoint, its destination, and `completedStoryChecks` using named
+event flags, badges, inventory, and an explicit Lavender arrival check. Custom
+milestones remain unverified. Checkpoints do not verify every sentence in the
+guidance or the whole objective; see [criteria and limits](docs/pokemon-readers.md#editable-story-objectives).
+
 The **?** beside each setting explains its behavior. Hover, focus the help button
 with the keyboard, or tap it to read the tooltip. Press Escape or tap elsewhere
 to dismiss it. Agent help describes shared request counts, elapsed time during
@@ -288,8 +327,9 @@ session stopped. Load a ROM or start a new process for fresh counters. Reset and
 visual/action history and discard pending responses while retaining the current
 session's counters. Checkpoints restore emulator state; they do not restore agent
 history, edited settings, or provider budgets.
-Milestones and a model-selected `stop` are not independently verified evidence
-of completion. A future game profile can supply explicit progress checks.
+Milestone text and a model-selected `stop` are not independently verified evidence
+of completion. Profile checkpoint checks can provide narrower game evidence;
+the session's full-objective completion status remains unverified.
 
 Each agent run writes a local JSONL record under `logs/sessions/`: objectives,
 selected provider IDs, candidate actions, observations, model choices and usage,
@@ -375,8 +415,9 @@ Loading pauses the current session, cancels pending model work, and saves its
 checkpoint. The new game starts from boot, paused, with the matching reader
 selected by exact hash. Press **Resume** to start, or **Settings → Session →
 Restore checkpoint** to continue a previous save for that ROM. Loading never
-makes model requests. Speed and applied agent objectives, constraints,
-milestones, providers, action duration, and ceilings carry over; decision and
+makes model requests. Speed, custom objectives, constraints, milestones,
+providers, action duration, and ceilings carry over. Untouched reader objectives
+refresh from the new game's suggestions. Decision and
 request counters, elapsed time, history, and inspection start fresh. Unapplied
 editor drafts are discarded. Each agent game has its own local JSONL record.
 Memory-only agent sessions reject cartridges without a compatible reader.
@@ -567,9 +608,11 @@ registration, JSON schema, validation, and examples.
   and Yellow revisions. Startup, naming, the starting room, and overworld menus
   were checked locally for all three; party/battle decoding is tested with
   synthetic RAM. Full-game play, other Pokémon revisions and generations,
-  global routing, full field/battle-command legality, and verified progress checks
-  remain future work. Local walking collisions and exit routes were checked from
-  both house floors into Pallet Town; no real-model success is claimed.
+  complete regional routing, full field/battle-command legality, and verified
+  full-objective completion remain future work. Local collision and destination
+  executions reached Pallet Town, Oak's encounter, and his laboratory in all
+  three, using an offline fixture decider and preserved saves. Named later-story
+  checks and coarse map connectivity are partial; no real-model success is claimed.
   The demo's new readiness flag changes its hash; older demo checkpoints must
   be replaced. Reader compatibility is checked against exact ROM hashes.
 
