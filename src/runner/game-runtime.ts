@@ -92,7 +92,7 @@ export async function createGameRuntime(rom: Uint8Array, options: CliOptions,
     const ensureLog = () => {
       if (log) return;
       logPath = join("logs", "sessions", `${randomUUID()}.jsonl`);
-      log = openSessionLog(logPath, { secrets, onLimit: () => console.error("Local session log reached 32 MiB. Further file events are omitted; gameplay continues.") });
+      log = openSessionLog(logPath, { secrets, onLimit: () => console.error("Local session log reached its 32 MiB window. Oldest events are now replaced; recording and gameplay continue.") });
       logger = createDiagnosticLogger(log.record, { verbose: options.debug, secrets });
     };
     if (selection.mode === "agent" || options.debug) ensureLog();

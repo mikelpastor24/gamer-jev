@@ -338,8 +338,14 @@ excluded. Records may contain game text and user objectives; keep them local.
 The same file includes timestamped diagnostics for the agent, game reader,
 Jev validation, and HTTP attempts, including failed decisions. Reader snapshots
 are recorded when fields or available actions change. Reset and restore clear
-that comparison, so the next read is recorded again. Logs stop at 32 MiB, write
-a `log-limit` marker, and warn in the terminal; gameplay continues.
+that comparison, so the next read is recorded again. Each log keeps a rolling
+window of recent events within 32 MiB. When full, it removes the oldest complete
+JSONL lines in batches, freeing at least a quarter of the window before adding
+the latest event. Retained events remain in chronological order in the same
+file; the initial session details can eventually be evicted. A single terminal
+notice announces the first eviction; recording and gameplay continue. An event
+larger than the whole window is replaced by a bounded `log-event-omitted` marker;
+subsequent events are still recorded.
 
 Add **`--debug`** to print these diagnostics in the terminal too. Without it,
 only diagnostic warnings and errors are printed. Manual play also creates a

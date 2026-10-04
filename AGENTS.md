@@ -138,7 +138,11 @@ The saved Red mother conversation was replayed locally without provider calls.
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
 manual-session records. Redact credentials, exclude raw provider response bodies,
-deduplicate unchanged reader snapshots, and cap each recording at 32 MiB.
+deduplicate unchanged reader snapshots, and cap each recording at 32 MiB. Keep
+a rolling chronological window: evict oldest complete JSONL lines in batches,
+retain recent events in the same file, and continue recording. Use bounded
+copy buffers; an oversized individual event gets a metadata-only omission
+marker without stopping subsequent events. Notify once at the first eviction.
 Completed actions record bounded local before/after state differences at actual
 execution frames. Decision feedback tracks up to 32 recurring observations,
 unchanged actions, action cycles, and stable fields, including menu reopen loops.

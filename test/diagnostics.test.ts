@@ -39,7 +39,7 @@ test("diagnostics redact credentials in both outputs and keep routine console ou
   assert.equal(parseCliOptions(["--demo"]).debug, false);
 });
 
-test("JSONL recordings redact session content, stay within their byte limit, and close safely", async () => {
+test("JSONL recordings redact content, report oversized events, continue recording, and close safely", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamer-jev-log-"));
   const path = join(directory, "local.jsonl");
   let notifications = 0;
@@ -47,16 +47,85 @@ test("JSONL recordings redact session content, stay within their byte limit, and
   try {
     log.record({ type: "session", goal: "Never log private-key", apiKey: "another-secret" });
     log.record({ type: "large", value: "Long fixture 🙂".repeat(200) });
-    log.record({ type: "omitted" });
+    log.record({ type: "latest" });
     log.close(); log.close(); log.record({ type: "after-close" });
     const text = await readFile(path, "utf8");
     const records = text.trim().split("\n").map((line) => JSON.parse(line));
     assert.doesNotMatch(text, /private-key|another-secret/);
-    assert.ok(!records.some((record) => record.event.type === "omitted" || record.event.type === "after-close"));
-    assert.equal(records.length, 2);
+    assert.ok(!records.some((record) => record.event.type === "large" || record.event.type === "after-close"));
+    assert.equal(records.length, 3);
     assert.equal(records[0].event.type, "session");
-    assert.equal(records[1].event.type, "log-limit");
-    assert.equal(notifications, 1); assert.ok((await stat(path)).size <= 1024);
+    assert.equal(records[1].event.type, "log-event-omitted");
+    assert.ok(records[1].event.eventBytes > 1024);
+    assert.equal(records[2].event.type, "latest");
+    assert.equal(notifications, 0); assert.ok((await stat(path)).size <= 1024);
+  } finally { log.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("rolling JSONL replaces oldest complete events with the newest chronological suffix across repeated evictions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamer-jev-rolling-log-"));
+  const path = join(directory, "local.jsonl");
+  let notifications = 0, evictions = 0, previousFirst = 0;
+  const log = openSessionLog(path, { maxBytes: 1024, secrets: ["private-key"], onLimit: () => { notifications++; } });
+  try {
+    for (let sequence = 0; sequence < 60; sequence++) {
+      log.record({ type: "fixture", sequence, text: "Pokémon 🙂\n".repeat(sequence % 4 + 1), credential: "private-key", apiKey: "other-secret" });
+      const text = await readFile(path, "utf8");
+      assert.ok(Buffer.byteLength(text) <= 1024); assert.ok(text.endsWith("\n"));
+      assert.doesNotMatch(text, /private-key|other-secret|�/);
+      const events = text.trim().split("\n").map(line => JSON.parse(line).event);
+      assert.equal(events.at(-1).sequence, sequence);
+      assert.deepEqual(events.map(event => event.sequence), Array.from({ length: events.length }, (_, index) => sequence - events.length + index + 1));
+      assert.ok(events[0].sequence >= previousFirst);
+      if (events[0].sequence > previousFirst) evictions++;
+      previousFirst = events[0].sequence;
+    }
+    assert.ok(evictions > 5); assert.equal(notifications, 1);
+    log.record({ type: "stop", reason: "Latest stop reason remains available." });
+    log.close();
+    const events = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line).event);
+    assert.equal(events.at(-1).type, "stop"); assert.ok(events.every(event => event.sequence !== 0));
+  } finally { log.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("rolling JSONL handles an exactly full window and preserves exclusive file creation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamer-jev-log-boundary-"));
+  const path = join(directory, "local.jsonl"), maxBytes = 512;
+  const event = { type: "full", text: "" };
+  const overhead = Buffer.byteLength(`${JSON.stringify({ at: "2000-01-01T00:00:00.000Z", event })}\n`);
+  const log = openSessionLog(path, { maxBytes });
+  try {
+    log.record({ ...event, text: "a".repeat(maxBytes - overhead) });
+    assert.equal((await stat(path)).size, maxBytes);
+    assert.throws(() => openSessionLog(path), /EEXIST/);
+    log.record({ type: "latest" });
+    log.close();
+    const records = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(records.length, 1); assert.equal(records[0].event.type, "latest");
+    assert.ok((await stat(path)).size <= maxBytes);
+  } finally { log.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("rolling JSONL scans and copies long UTF-8 records across bounded buffer chunks", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamer-jev-log-chunks-"));
+  const path = join(directory, "local.jsonl"), maxBytes = 256 * 1024;
+  const text = "🙂".repeat(24 * 1024); // Each line exceeds the 64 KiB copy buffer.
+  const log = openSessionLog(path, { maxBytes });
+  try {
+    for (let sequence = 0; sequence < 9; sequence++) {
+      log.record({ type: "large-fixture", sequence, text });
+      const content = await readFile(path, "utf8");
+      assert.ok(Buffer.byteLength(content) <= maxBytes);
+      const records = content.trim().split("\n").map(line => JSON.parse(line).event);
+      assert.deepEqual(records.map(event => event.sequence), sequence === 0 ? [0] : [sequence - 1, sequence]);
+      assert.ok(records.every(event => event.text === text));
+    }
+    log.record({ type: "oversized", text: text.repeat(4) });
+    log.record({ type: "stop" });
+    log.close();
+    const records = (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line).event);
+    assert.equal(records.at(-2).type, "log-event-omitted"); assert.equal(records.at(-1).type, "stop");
+    assert.ok((await stat(path)).size <= maxBytes);
   } finally { log.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
