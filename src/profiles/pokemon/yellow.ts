@@ -3,6 +3,7 @@ import { GenerationOnePokemonReader } from "./generation-one.js";
 import type { GenerationOneLayout } from "./generation-one.js";
 import { YELLOW_NAVIGATION } from "./navigation-layout.js";
 import { pokemonObjectives } from "./objectives.js";
+import { YELLOW_BATTLE } from "./battle-layout.js";
 
 export const POKEMON_YELLOW_DESCRIPTOR: GameReaderDescriptor = {
   id: "pokemon-yellow-en", name: "Pokémon Yellow (USA, Europe)", consoleId: "game-boy",
@@ -24,5 +25,5 @@ export const POKEMON_YELLOW_LAYOUT: GenerationOneLayout = Object.freeze({
 });
 
 export function createPokemonYellowReader(): GenerationOnePokemonReader {
-  return new GenerationOnePokemonReader(POKEMON_YELLOW_DESCRIPTOR, POKEMON_YELLOW_LAYOUT, YELLOW_NAVIGATION, pokemonObjectives("pikachu"));
+  return new GenerationOnePokemonReader(POKEMON_YELLOW_DESCRIPTOR, POKEMON_YELLOW_LAYOUT, YELLOW_NAVIGATION, pokemonObjectives("pikachu"), YELLOW_BATTLE);
 }

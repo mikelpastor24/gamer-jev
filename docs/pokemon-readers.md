@@ -77,6 +77,8 @@ records follow the workflows in the [README](../README.md).
 | `bagCount`, `bagItems` | Occupied bag slots and internal item ID/quantity pairs |
 | `partyCount`, `party1` through `party6`, corresponding `Moves` fields | Nicknames, internal species IDs, levels, big-endian HP, types, status, and move IDs/PP |
 | `battleKind`, `battleType`, `battlePlayer`, `battlePlayerMoves`, `battleEnemy` | Active battle data, including current HP and normal/demo/Safari variant |
+| `battleMove1` through `battleMove4` | Active normal-battle moves: name, type, Gen I category, power, approximate base accuracy, live PP, effect hints, and ordinary damage multipliers when applicable |
+| `battleMenu`, `battleMoveSelection` | Confirmed command/move menu or unknown screen and highlighted move slot; action availability keys separately protect delayed responses |
 | `oakEncounterCompleted`, `starterReceived`, `firstRivalBattleCompleted`, `parcelReceived`, `pokedexReceived` | Named opening event-flag evidence |
 | `activeMilestone`, `activeMilestoneGoal`, `objectiveMapId`, `completedStoryChecks` | First pending recognized supplied checkpoint in the user's list order, its target map, and satisfied checkpoint IDs |
 
@@ -98,6 +100,51 @@ party screens, and other unboxed labels are not fully represented.
 Party and battle structures are different. During a fight, `battlePlayer`
 contains current HP and `battlePlayerMoves` contains current PP; the party copy
 can lag until the fight ends. Internal species IDs are **not Pokédex numbers**.
+
+### Battle move choices and types
+
+[`PokemonBattleSupport`](../src/profiles/pokemon/battle-support.ts) reads the
+165 move records, English move names, and type-effect table from the loaded
+cartridge. Exact ROM offsets and menu/Disable RAM addresses live in
+[`battle-layout.ts`](../src/profiles/pokemon/battle-layout.ts). These bounded,
+immutable decoded tables are cached per reader and cleared on reset/restore.
+No bundled move database, additional model, or vision key is needed.
+
+Jev receives the active player's and enemy's types alongside each move. An
+ordinary damaging move includes its physical/special category under Gen I
+rules, same-type attack bonus (STAB), and combined effectiveness against the
+enemy's distinct types: for example, `STAB=1.5x; effectiveness=4x`. Duplicate
+type bytes count once. The cartridge table preserves Gen I behavior, including
+Ghost attacks doing no damage to Psychic and Poison/Bug weaknesses; modern
+type charts are not substituted. Unknown/invalid metadata stays unknown.
+
+These factors are not predicted final damage. Stats, stages, critical hits,
+burn, screens, random damage and detailed effects are not modeled. Base accuracy
+is the approximate ROM threshold, not current hit probability. Status moves
+include effect hints where decoded, with damage effectiveness marked `n/a`;
+Growl is described as lowering Attack rather than as an immune Normal attack
+against Ghost. Fixed damage, OHKO, copied/random moves and other special rules
+are identified separately, without applying ordinary STAB/type factors as a
+damage estimate. This information supports decisions without guaranteeing the
+best move.
+
+When the normal move menu's RAM anchors, displayed names and cursor agree,
+the reader offers `use_move_1` through `use_move_4` for slots with PP that are
+not disabled. Each choice carries its move facts. Its profile executor navigates
+only to Jev's selected slot and sends one A confirmation pulse, within 600
+frames. It stops if the menu closes or battle actors, moves, PP or Disable state
+change. Cursor movement does not invalidate a chosen slot, while a delayed
+generic A is protected against a changed highlight. Temporary index changes
+during printing settle locally. UP/DOWN, B, wait and stop remain available;
+A is excluded on a move without PP or a disabled move. Ineffective horizontal,
+START and move-swapping SELECT inputs are excluded in this confirmed menu.
+Demonstration, Safari, move-learning/Mimic prompts and unknown screens retain
+their existing controller attempts. Party switching, items, and complete
+battle-command legality are not implemented as semantic actions.
+
+Inspect these fields and choices through **Game state** or the dashboard's
+Jev request/response inspection, including when using direct TypeSafe without
+vision. Jev chooses the attack; the reader never substitutes a stronger move.
 
 When the complete START menu is visible and POKEMON is selected with an empty
 party, the reader excludes A: that selection cannot open the party screen.
@@ -212,9 +259,9 @@ active Strength retains attempted boulder pushes. Scripts, locks, forced movemen
 and other field mechanics may still reject a route. Appearance labels are not
 verified script identities, and route distances do not prove quest progress.
 
-Item and move IDs are not translated using a bundled game-data table. Names
-visible in boxed menus remain available as text; a nickname need not identify
-its species.
+Item IDs and party move IDs retain their raw values. Active normal-battle moves
+add names and properties decoded from the cartridge as described above. No
+bundled game-data table is used; a nickname need not identify its species.
 
 Actions retain stable controller IDs such as `press_a` and `press_down`, with
 context descriptions. Button presses use at most eight frames, or a shorter
@@ -222,11 +269,12 @@ context descriptions. Button presses use at most eight frames, or a shorter
 configured duration. Simultaneous button combinations are excluded. LCD-off
 and blocked overworld transitions offer only `wait` and `stop`. Stable overworld
 and known menu/text phases use the additional availability rules above. Unknown
-menus and battles retain single-button attempts: a control can do nothing if the
+menus and battle screens outside the confirmed move menu retain single-button attempts: a control can do nothing if the
 current screen ignores it. The reader does not claim to enumerate every legal in-game command
 or exclude every ineffective input. Jev selects every offered gameplay action.
-The optional executor implements only the selected target; it does not choose
-battle moves, new destinations, or a walkthrough on the model's behalf.
+The optional executors implement only the selected destination or move slot;
+they do not choose battle moves, new destinations, or a walkthrough on the
+model's behalf.
 
 ### Editable story objectives
 
@@ -302,6 +350,9 @@ owns English character codes, BCD, bit counts, and boxed text.
 `progress.ts` interprets supplied story checkpoints, `map-graph.ts` owns coarse
 connectivity, and `navigation-execution.ts` retains a selected destination;
 `navigation-layout.ts` supplies verified RAM and ROM addresses for its mechanics.
+`battle-support.ts` decodes move/type facts and menu availability;
+`battle-execution.ts` retains the selected attack slot, and `battle-layout.ts`
+supplies exact cartridge and battle-menu addresses.
 [`red.ts`](../src/profiles/pokemon/red.ts),
 [`blue.ts`](../src/profiles/pokemon/blue.ts), and
 [`yellow.ts`](../src/profiles/pokemon/yellow.ts) supply each exact revision.
@@ -313,6 +364,7 @@ the core, Jev adapters, vision adapters, and runner contain no Pokémon knowledg
 Reads take a fresh
 bounded RAM snapshot without writes, frame advancement, or RAM caches.
 Navigation additionally caches bounded immutable ROM slices, never live RAM.
+Battle support caches at most 165 move descriptions and a bounded type table.
 
 To add a compatible Gen I release:
 
@@ -354,6 +406,11 @@ English disassemblies:
 - [Red/Blue named event bits](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/event_constants.asm)
 - [Yellow named event bits](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/constants/event_constants.asm)
 - [Key item IDs](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/item_constants.asm)
+- [Move record properties](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/data/moves/moves.asm)
+- [Generation I type-effect table](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/data/types/type_matchups.asm)
+- [Move effects](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/move_effect_constants.asm)
+- [Red/Blue battle menus, type damage and STAB](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/battle/core.asm)
+- [Yellow battle menus and rules](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/engine/battle/core.asm)
 - [Red/Blue Pallet encounter script](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/scripts/PalletTown.asm)
 - [Yellow Pallet encounter script](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/scripts/PalletTown.asm)
 - [Reference project's state, legal options, and facts architecture](https://github.com/christianmat/jev-pokemon/tree/20cdcb846ff995383fe3da1d48ad5eac6d8d1abd)
@@ -373,12 +430,20 @@ encounter and laboratory, with the correct event flag and the starter checkpoint
 active. Red began from a copy of the user's Pallet checkpoint; Blue and Yellow
 began on the upper house floor. No API calls were made and the original saves
 were unchanged. These checks validate mechanics, not Jev's live choices.
-Party/battle decoding is covered by synthetic fixtures; full-game
+Battle tests also use invented ROM tables/names and cover dual types, immunities,
+STAB, status/special rules, PP/Disable exclusions, stale contexts, printing,
+selected-slot execution, and frame ceilings. Local read-only checks decoded move
+properties and type factors from all three cartridges. An isolated Red replay
+recognized the actual normal move menu and executed slot 2 (Growl): its PP fell
+from 40 to 39, Scratch's PP stayed unchanged, and the enemy's Attack fell. It
+used an offline fixture decider, made no API requests, and did not overwrite the
+user's checkpoint. These checks validate mechanics rather than Jev's strategy.
+Full-game
 play and live Jev performance have not been verified. Yellow-specific follower
 behavior and Pikachu's happiness are not decoded by the shared reader.
 
 These readers supply observations and local wayfinding, not a complete Pokémon
-agent. Complete region-aware routing, gate/script prerequisites, battle-command
+agent. Complete region-aware routing, gate/script prerequisites, full battle-command
 legality, full field mechanics, and verified full-objective completion remain
 future work. Coarse connectivity and named story checks do not fill those gaps.
 Vision can supplement missing visible evidence.

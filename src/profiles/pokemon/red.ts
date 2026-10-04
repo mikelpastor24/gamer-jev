@@ -3,6 +3,7 @@ import { GenerationOnePokemonReader } from "./generation-one.js";
 import { POKEMON_RED_BLUE_LAYOUT } from "./red-blue-layout.js";
 import { RED_BLUE_NAVIGATION } from "./navigation-layout.js";
 import { pokemonObjectives } from "./objectives.js";
+import { RED_BLUE_BATTLE } from "./battle-layout.js";
 
 export const POKEMON_RED_DESCRIPTOR: GameReaderDescriptor = {
   id: "pokemon-red-en", name: "Pokémon Red (USA, Europe)", consoleId: "game-boy",
@@ -12,5 +13,5 @@ export const POKEMON_RED_DESCRIPTOR: GameReaderDescriptor = {
 export const POKEMON_RED_LAYOUT = POKEMON_RED_BLUE_LAYOUT;
 
 export function createPokemonRedReader(): GenerationOnePokemonReader {
-  return new GenerationOnePokemonReader(POKEMON_RED_DESCRIPTOR, POKEMON_RED_LAYOUT, RED_BLUE_NAVIGATION, pokemonObjectives("choice"));
+  return new GenerationOnePokemonReader(POKEMON_RED_DESCRIPTOR, POKEMON_RED_LAYOUT, RED_BLUE_NAVIGATION, pokemonObjectives("choice"), RED_BLUE_BATTLE);
 }

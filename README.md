@@ -613,6 +613,12 @@ registration, JSON schema, validation, and examples.
   executions reached Pallet Town, Oak's encounter, and his laboratory in all
   three, using an offline fixture decider and preserved saves. Named later-story
   checks and coarse map connectivity are partial; no real-model success is claimed.
+  Normal battles add cartridge-derived move names, types, power, base accuracy,
+  PP, STAB and type effectiveness. Jev can select an explicit usable move slot;
+  its executor navigates and confirms only that choice. Metadata was checked
+  locally for all three, and slot 2 execution was checked in a Red combat replay.
+  Status/special rules are distinguished; full damage prediction and party/item
+  battle commands remain incomplete. See [Pokémon readers](docs/pokemon-readers.md).
   The demo's new readiness flag changes its hash; older demo checkpoints must
   be replaced. Reader compatibility is checked against exact ROM hashes.
 

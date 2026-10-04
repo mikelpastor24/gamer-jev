@@ -61,6 +61,22 @@ Oak's encounter into his lab were checked for all three revisions using an
 offline fixture decider, without paid requests or changing the original saves.
 Synthetic tests cover legality, timing, interruption, and frame ceilings.
 
+`PokemonBattleSupport` is another profile-local reader adjunct. Exact battle
+layouts read move records/names and the Gen I type chart from the user's ROM,
+not a bundled asset dump. Cache at most 165 decoded moves and a bounded chart;
+reset/restore clears them. Active normal-battle moves expose names, types,
+power, approximate base accuracy, PP, effect hints, STAB and combined distinct
+enemy-type factors. Status/special rules must not be presented as ordinary
+damage estimates. Unknown tables/types remain unknown. A verified regular move
+menu offers usable `use_move_1..4` slots, excluding no-PP and disabled choices.
+The bounded executor follows only Jev's selected slot and confirms once; changed
+actors/moves/PP/Disable or a closed menu end execution. Guard delayed generic A
+against highlight changes, while selected-slot actions tolerate cursor movement.
+Temporary menu printing settles locally. Tests use invented tables; local
+cartridge metadata checks cover all three and a Red replay verified slot 2
+execution without APIs or overwriting the original checkpoint. This does not
+establish full battle legality, damage prediction, or live Jev performance.
+
 Readers optionally implement `setObjectives`, `createExecution`, and `shouldWait`.
 An offered `execution: "profile"` action has no fixed buttons and a 1–600-frame
 ceiling. Only Jev selects it. Its read-only executor emits one validated frame

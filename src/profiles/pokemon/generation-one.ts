@@ -4,6 +4,10 @@ import { countBits, decodeBcd, decodeName, readTextScreen } from "./encoding.js"
 import { GenerationOneDecisionSupport } from "./decision-support.js";
 import type { PokemonNavigationLayout } from "./navigation-layout.js";
 import { pokemonNavigationExecution } from "./navigation-execution.js";
+import type { PokemonBattleLayout } from "./battle-layout.js";
+import { PokemonBattleSupport } from "./battle-support.js";
+import { pokemonMoveExecution } from "./battle-execution.js";
+import { pokemonTypeNames } from "./types.js";
 
 /** Addresses vary by engine, language, and revision. This contract is only for English Gen I. */
 export interface GenerationOneLayout {
@@ -38,10 +42,6 @@ export interface GenerationOneLayout {
 }
 
 const badgeNames = ["Boulder", "Cascade", "Thunder", "Rainbow", "Soul", "Marsh", "Volcano", "Earth"];
-const typeNames: Readonly<Record<number, string>> = {
-  0: "Normal", 1: "Fighting", 2: "Flying", 3: "Poison", 4: "Ground", 5: "Rock", 7: "Bug", 8: "Ghost",
-  20: "Fire", 21: "Water", 22: "Grass", 23: "Electric", 24: "Psychic", 25: "Ice", 26: "Dragon",
-};
 
 function status(value: number, hp: number): string {
   if (hp === 0) return "fainted";
@@ -60,31 +60,37 @@ export class GenerationOnePokemonReader implements GameReader {
   readonly descriptor: GameReaderDescriptor;
   private readonly layout: GenerationOneLayout;
   private readonly support: GenerationOneDecisionSupport;
+  private readonly combat: PokemonBattleSupport | undefined;
   private pulseFrames = 8;
   private controlMap: number | undefined;
   private mapChangedAt = -60;
 
-  constructor(descriptor: GameReaderDescriptor, layout: GenerationOneLayout, navigation?: PokemonNavigationLayout, readonly defaultObjectives?: Objectives) {
+  constructor(descriptor: GameReaderDescriptor, layout: GenerationOneLayout, navigation?: PokemonNavigationLayout, readonly defaultObjectives?: Objectives, battle?: PokemonBattleLayout) {
     this.descriptor = structuredClone(descriptor);
     this.layout = { ...layout };
     this.support = new GenerationOneDecisionSupport(navigation);
+    this.combat = battle ? new PokemonBattleSupport({ ...battle }, this.layout) : undefined;
     for (const address of Object.values(layout)) if (!Number.isSafeInteger(address) || address < 0xc000 || address > 0xdfff) {
       throw new Error("Generation I layout addresses must be in Game Boy work RAM.");
     }
   }
 
-  reset(): void { this.support.reset(); this.controlMap = undefined; this.mapChangedAt = -60; }
+  reset(): void { this.support.reset(); this.combat?.reset(); this.controlMap = undefined; this.mapChangedAt = -60; }
   setObjectives(objectives: Objectives): void { this.support.setObjectives(objectives); }
   shouldWait(state: GameStateData, frame: number): boolean {
     if (typeof state.values.mapId === "number" && state.values.gameStarted === true) {
       if (this.controlMap !== undefined && this.controlMap !== state.values.mapId) this.mapChangedAt = frame;
       this.controlMap = state.values.mapId;
     }
-    return state.values.gameStarted === true && (state.values.phase === "transition" || state.values.movementInProgress === true || state.values.controlBusy === true ||
+    return state.values.gameStarted === true && (state.values.phase === "transition" || state.values.battleMenu === "moves_pending" || state.values.movementInProgress === true || state.values.controlBusy === true ||
       state.values.phase === "overworld" && frame - this.mapChangedAt < 60);
   }
   createExecution(memory: GameReaderMemory, action: AgentAction) {
-    if (action.execution !== "profile") throw new Error("Only offered profile targets have navigation executors.");
+    if (action.execution !== "profile") throw new Error("Only offered profile actions have local executors.");
+    if (/^use_move_[1-4]$/.test(action.id) && this.combat) return pokemonMoveExecution(Number(action.id.at(-1)), () => {
+      this.readState(memory);
+      return this.combat!.executionState();
+    }, this.pulseFrames);
     return pokemonNavigationExecution(action.id, () => {
       const state = this.readState(memory);
       return { state, route: this.support.route(action.id) };
@@ -116,8 +122,11 @@ export class GenerationOnePokemonReader implements GameReader {
     const add = (name: string, value: StateValue, description: string) => { values[name] = value; descriptions[name] = description; };
     const enriched = (): GameStateData => {
       const extra = this.support.read(memory, ram, values, inventory);
-      return { values: { ...values, ...extra.values }, descriptions: { ...descriptions, ...extra.descriptions },
-        ...(extra.decisionSupport ? { decisionSupport: extra.decisionSupport } : {}) };
+      const combat = this.combat?.read(memory, ram, values);
+      const support = combat?.decisionSupport ?? extra.decisionSupport;
+      return { values: { ...values, ...extra.values, ...combat?.values }, descriptions: { ...descriptions, ...extra.descriptions, ...combat?.descriptions },
+        ...(support ? { decisionSupport: { facts: [...(combat?.decisionSupport?.facts ?? []), ...(extra.decisionSupport?.facts ?? [])].slice(0, 32),
+          actionFacts: { ...extra.decisionSupport?.actionFacts, ...combat?.decisionSupport?.actionFacts } } } : {}) };
     };
     add("phase", phase, "Memory evidence: menu has a visible box cursor; text has a box; battle uses the battle flag. Boot, intro, and transitions may need waiting.");
     add("gameStarted", started, "The game timer is enabled and a terminated player name exists. Introductory map defaults are not exploration state.");
@@ -188,8 +197,8 @@ export class GenerationOnePokemonReader implements GameReader {
   availableActions(state: GameState, actions: readonly AgentAction[]): readonly AgentAction[] {
     this.pulseFrames = Math.min(actions.find(action => action.id === "wait")?.frames ?? 8, 8);
     const emptyPartySelection = state.values.menuKind === "overworld" && state.values.menuSelection === "POKEMON" && state.values.partyCount === 0;
-    return [...this.support.actions(state), ...actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1 &&
-      !(emptyPartySelection && action.buttons[0] === "A") && this.support.allows(state, action.buttons[0]!))
+    return [...this.support.actions(state), ...(this.combat?.actions(state) ?? []), ...actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1 &&
+      !(emptyPartySelection && action.buttons[0] === "A") && this.support.allows(state, action.buttons[0]!) && (this.combat?.allows(state, action.buttons[0]!) ?? true))
       .map((action) => {
         if (action.stop || action.id === "wait") return action;
         const button = action.buttons[0]!;
@@ -211,6 +220,7 @@ export class GenerationOnePokemonReader implements GameReader {
         const availabilityKey = [state.values.phase, state.values.mapId ?? "intro",
           ...(state.values.phase === "overworld" ? [state.values.playerX, state.values.playerY, state.values.facing] : []),
           ...(menu ? [state.values.menuKind ?? "unknown", state.values.menuCursorX, state.values.menuCursorY, state.values.enteredName ?? ""] : []),
+          ...(state.values.phase === "battle" ? [this.combat?.contextKey(state) ?? "unknown", state.values.battleMenu ?? "other", state.values.battleMoveSelection ?? 0, state.values.menuCursorX, state.values.menuCursorY] : []),
           state.values.dialogueActive === true ? `dialogue${state.values.dialogueSession ?? ""}` : ""].join(":");
         return { ...action, frames, availabilityKey,
           description: `${description}${detail ? ` Facts: ${detail.slice(0, 270)}` : ""} Press ${button} for ${frames} frames, then release for 4 frames.` };
@@ -223,7 +233,7 @@ export class GenerationOnePokemonReader implements GameReader {
     const maxOffset = battle ? 15 : 34;
     const maxHp = mon[maxOffset]! * 256 + mon[maxOffset + 1]!;
     if (!mon[0] || mon[0]! > 190 || level < 1 || level > 100 || !maxHp || hp > maxHp) return "unavailable (uninitialized or transitional data)";
-    const types = [...new Set([mon[5]!, mon[6]!])].map((id) => typeNames[id] ?? `typeId=${id}`).join("/");
+    const types = [...new Set([mon[5]!, mon[6]!])].map((id) => pokemonTypeNames[id] ?? `typeId=${id}`).join("/");
     return `${decodeName(name) ?? "unnamed"}; speciesId=${mon[0]}; level=${level}; HP=${hp}/${maxHp}; ${types}; ${status(mon[4]!, hp)}`;
   }
 
