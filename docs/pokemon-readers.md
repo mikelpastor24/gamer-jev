@@ -78,7 +78,7 @@ records follow the workflows in the [README](../README.md).
 | `partyCount`, `party1` through `party6`, corresponding `Moves` fields | Nicknames, internal species IDs, levels, big-endian HP, types, status, and move IDs/PP |
 | `battleKind`, `battleType`, `battlePlayer`, `battlePlayerMoves`, `battleEnemy` | Active battle data, including current HP and normal/demo/Safari variant |
 | `battleMove1` through `battleMove4` | Active normal-battle moves: name, type, Gen I category, power, approximate base accuracy, live PP, effect hints, and ordinary damage multipliers when applicable |
-| `battleMenu`, `battleMoveSelection` | Confirmed command/move menu or unknown screen and highlighted move slot; action availability keys separately protect delayed responses |
+| `battleMenu`, `battleMoveSelection` | Confirmed commands/moves, printing moves, fainting transition, text acknowledgment or unknown screen, and highlighted move slot; action availability keys separately protect delayed responses |
 | `oakEncounterCompleted`, `starterReceived`, `firstRivalBattleCompleted`, `parcelReceived`, `pokedexReceived` | Named opening event-flag evidence |
 | `activeMilestone`, `activeMilestoneGoal`, `objectiveMapId`, `completedStoryChecks` | First pending recognized supplied checkpoint in the user's list order, its target map, and satisfied checkpoint IDs |
 
@@ -145,6 +145,39 @@ battle-command legality remain partial. Capture and Mart choices are described b
 Inspect these fields and choices through **Game state** or the dashboard's
 Jev request/response inspection, including when using direct TypeSafe without
 vision. Jev chooses the attack; the reader never substitutes a stronger move.
+
+### Fainting and battle text
+
+[`PokemonBattleFlow`](../src/profiles/pokemon/battle-flow.ts) distinguishes
+fainting transitions from text prompts in normal battles. With a decoded
+active Pokemon at 0 HP and no visible choice or verified text continuation,
+`battleMenu: faint_pending` requests neutral settling. The runner skips both
+Jev and vision for at most 600 frames, retaining cancellation and session
+limits. If readiness remains unknown at that ceiling, controller attempts
+remain available for Jev to reassess. Stale move names with a fainted actor
+do not establish a printing move menu.
+
+A complete bottom dialogue box with a continuation arrow and no selection
+cursor/grid becomes `battleMenu: text_acknowledgment`. Its facts explain that
+the game needs A or B; more neutral waiting will not advance that prompt.
+Only A, B and stop are offered. Jev still selects the acknowledgment, with a
+single input frame followed by the normal release, before observing again.
+No local code presses a button automatically. The reader retains one bounded
+prompt fingerprint across arrow blinking, invalidates it when the text,
+actors or screen changes, and clears it on reset/restore. A delayed
+acknowledgment cannot silently acquire the next message's meaning.
+
+Party selection, YES/NO prompts, naming grids and unknown choice screens
+remain Jev decisions. Fainting facts explain that a 0-HP actor cannot attack,
+that a defeated wild enemy cannot be captured, and that a fainted enemy does
+not prove the whole battle is over. Replacement-party controls and other
+battle variants are still only partially decoded. Synthetic tests cover all
+three readers, provider skipping, cancellation, the frame ceiling and one
+chosen acknowledgment. An isolated Red checkpoint replay verified that
+600 neutral frames leave the fainted message open and one fixture-selected
+A reaches the experience message, with no API requests or changes to the
+original checkpoint. This does not establish live Jev behavior or complete
+fainting/switching mechanics.
 
 ### Capture, inventory and visible loot
 

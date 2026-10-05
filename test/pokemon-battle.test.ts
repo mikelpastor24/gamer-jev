@@ -16,13 +16,23 @@ import { evaluationRequest } from "../src/jev/evaluation.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { RequestBudget } from "../src/providers/requests.js";
+import { decodeCharacter } from "../src/profiles/pokemon/encoding.js";
+import { withVision } from "../src/observation/combined.js";
 
 const variants = [
   { name: "Red", descriptor: POKEMON_RED_DESCRIPTOR, layout: POKEMON_RED_LAYOUT, battle: RED_BLUE_BATTLE, create: createPokemonRedReader },
   { name: "Blue", descriptor: POKEMON_BLUE_DESCRIPTOR, layout: POKEMON_BLUE_LAYOUT, battle: RED_BLUE_BATTLE, create: createPokemonBlueReader },
   { name: "Yellow", descriptor: POKEMON_YELLOW_DESCRIPTOR, layout: POKEMON_YELLOW_LAYOUT, battle: YELLOW_BATTLE, create: createPokemonYellowReader },
 ];
-const encode = (text: string) => Uint8Array.from([...text].map(character => character === " " ? 0x7f : character.charCodeAt(0) - 65 + 0x80));
+const characterCodes = new Map<string, number>();
+for (let code = 0; code < 256; code++) {
+  const character = decodeCharacter(code);
+  if (character?.length === 1) characterCodes.set(character, code);
+}
+const encode = (text: string) => Uint8Array.from([...text].map(character => {
+  const code = characterCodes.get(character);
+  assert.notEqual(code, undefined, `Unsupported fixture character: ${character}`); return code!;
+}));
 const names = ["FIREROAR", "WATERJET", "SOFTVOICE", "ODDHIT"];
 
 /** Invented move names, records, pixels and RAM. No commercial assets or API access. */
@@ -74,6 +84,17 @@ class BattleFixture implements Emulator, MemoryReader, RomReader {
     this.ram[this.variant.battle.menuItem] = slot;
     for (let index = 1; index <= 4; index++) this.ram[this.variant.layout.tileMap + (12 + index) * 20 + 5] = slot === index ? 0xed : 0x7f;
   }
+  dialogue(lines: readonly string[], arrow = true) {
+    const tiles = this.ram.subarray(this.variant.layout.tileMap, this.variant.layout.tileMap + 360);
+    tiles.fill(0x7f);
+    for (let y = 12; y <= 17; y++) {
+      tiles[y * 20] = y === 12 ? 0x79 : y === 17 ? 0x7d : 0x7c;
+      tiles[y * 20 + 19] = y === 12 ? 0x7b : y === 17 ? 0x7e : 0x7c;
+      if (y === 12 || y === 17) tiles.fill(0x7a, y * 20 + 1, y * 20 + 19);
+    }
+    lines.forEach((line, index) => tiles.set(encode(line), (14 + index * 2) * 20 + 1));
+    if (arrow) tiles[16 * 20 + 18] = 0xee;
+  }
   readMemory(address: number, length: number) { return this.ram.slice(address, address + length); }
   readRom(offset: number, length: number) {
     assert.ok(length <= 0x4000 && offset >= 0 && offset + length <= this.romByteLength);
@@ -96,6 +117,23 @@ class BattleFixture implements Emulator, MemoryReader, RomReader {
   dispose() {}
 }
 
+class FaintingFixture extends BattleFixture {
+  acknowledgments = 0;
+  constructor(variant = variants[0]!, readonly promptAt = 30) {
+    super(variant);
+    this.ram[variant.layout.enemyMon + 2] = 0;
+    this.dialogue(["Enemy TESTMON", "fain"], false);
+  }
+  override advance(action: EmulatorAction) {
+    this.inputs.push(structuredClone(action)); this.frameNumber += action.frames;
+    if (action.buttons.includes("A")) {
+      this.acknowledgments++;
+      this.dialogue(["Use next POKEMON?", "YES NO"], false);
+      this.ram[this.variant.layout.tileMap + 16 * 20 + 1] = 0xed;
+    } else if (this.frameNumber >= this.promptAt && !this.acknowledgments) this.dialogue(["Enemy TESTMON", "fainted!"]);
+  }
+}
+
 function snapshot(fixture: BattleFixture, reader = fixture.variant.create()): GameState {
   const value = { ...reader.readState(fixture), source: reader.descriptor.id, frame: fixture.frameNumber };
   validateGameState(value, fixture.frameNumber); return value;
@@ -103,6 +141,98 @@ function snapshot(fixture: BattleFixture, reader = fixture.variant.create()): Ga
 const buttons = controllerActions(GAME_BOY_DESCRIPTOR.buttons, 24);
 
 for (const variant of variants) {
+  test(`${variant.name} skips Jev and vision during fainting, then executes only one Jev-selected acknowledgment`, async () => {
+    const fixture = new FaintingFixture(variant), contexts: DecisionContext[] = [];
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let visionCalls = 0;
+    const observer = withVision(createStateObserver(provider), { async observe() {
+      visionCalls++; assert.ok(fixture.frameNumber >= 30);
+      return { text: "Synthetic fainted message", model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } };
+    } });
+    const budget = new RequestBudget({ maxRequests: 1, timeoutMs: 1000, intervalMs: 0, retries: 0 });
+    const session = new AgentSession(fixture, { mode: "mock", visionProvider: "mock", observer, budget,
+      objectives: { goal: "Acknowledge the fainted message", constraints: [], milestones: [] }, actionFrames: 24, maxDecisions: 1, maxSeconds: 60,
+      decider: { async decide(context) {
+        contexts.push(context); assert.equal(context.gameState!.values.battleMenu, "text_acknowledgment");
+        assert.deepEqual(context.actions.map(action => action.id), ["press_a", "press_b", "stop"]);
+        const request = evaluationRequest(context, "fixture");
+        assert.match(request.questions.next_action.criteria.press_a!, /advances the current battle message once/);
+        return { actionId: "press_a", confidence: 1, model: "fixture", probabilities: {}, usage: { inputTokens: 0, outputTokens: 0 } };
+      } },
+    });
+    try {
+      session.tick(10); session.tick(10); session.tick(10);
+      assert.equal(fixture.frameNumber, 30); assert.equal(contexts.length, 0); assert.equal(visionCalls, 0);
+      assert.ok(fixture.inputs.every(input => input.buttons.length === 0));
+      await runAgentHeadless(fixture, session, new AbortController().signal);
+      assert.equal(contexts.length, 1); assert.equal(visionCalls, 1); assert.equal(budget.requests, 0);
+      assert.equal(fixture.acknowledgments, 1);
+      assert.deepEqual(fixture.inputs.filter(input => input.buttons.length), [{ buttons: ["A"], frames: 1 }]);
+      assert.equal(fixture.inputs.at(-1)!.buttons.length, 0);
+      assert.equal(provider.read(fixture.captureFrame()).state.values.battleMenu, "other"); // The next choice was not answered.
+    } finally { session.stop("Test finished."); }
+  });
+
+  test(`${variant.name} explains fainted text prompts, excludes ineffective waiting, and keeps blinking input meaning stable`, () => {
+    const fixture = new BattleFixture(variant), reader = variant.create();
+    fixture.ram[variant.layout.enemyMon + 2] = 0;
+    fixture.dialogue(["Enemy TESTMON", "fainted!"]);
+    const before = fixture.ram.slice();
+    let state = snapshot(fixture, reader), offered = reader.availableActions(state, buttons);
+    assert.equal(state.values.battleMenu, "text_acknowledgment");
+    assert.equal(reader.shouldWait(state, fixture.frameNumber), false);
+    assert.deepEqual(offered.map(action => action.id), ["press_a", "press_b", "stop"]);
+    assert.match(state.decisionSupport!.facts.join(" "), /waiting for A or B, not more time.*enemy has 0 HP/);
+    assert.match(offered.find(action => action.id === "press_a")!.description, /advances the current battle message once/);
+    assert.equal(offered.find(action => action.id === "press_a")!.frames, 1);
+    validateAgentActions(offered, GAME_BOY_DESCRIPTOR.buttons);
+    assert.deepEqual(fixture.ram, before); assert.equal(fixture.frameNumber, 0);
+    const key = offered.find(action => action.id === "press_a")!.availabilityKey;
+    fixture.ram[variant.layout.tileMap + 16 * 20 + 18] = 0x7f;
+    state = snapshot(fixture, reader); offered = reader.availableActions(state, buttons);
+    assert.equal(state.values.battleMenu, "text_acknowledgment");
+    assert.equal(offered.find(action => action.id === "press_a")!.availabilityKey, key);
+    fixture.dialogue(["TESTMON gained", "12 EXP. Points!"]);
+    assert.notEqual(reader.availableActions(snapshot(fixture, reader), buttons).find(action => action.id === "press_a")!.availabilityKey, key);
+    fixture.ram[variant.layout.tileMap + 16 * 20 + 18] = 0x7f;
+    reader.reset(); state = snapshot(fixture, reader);
+    assert.equal(state.values.battleMenu, "faint_pending"); assert.equal(reader.shouldWait(state, 0), true);
+  });
+
+  test(`${variant.name} settles fainting without hiding party, YES/NO, naming or unknown choices`, () => {
+    const fixture = new BattleFixture(variant), reader = variant.create();
+    fixture.ram[variant.layout.battleMon + 2] = 0;
+    fixture.dialogue(["TESTMON", "fain"], false);
+    let state = snapshot(fixture, reader);
+    assert.equal(state.values.battleMenu, "faint_pending"); assert.equal(reader.shouldWait(state, 0), true);
+    assert.match(state.decisionSupport!.facts.join(" "), /active Pokemon has 0 HP and cannot attack/);
+    fixture.dialogue(["Use next POKEMON?", "YES NO"], false);
+    fixture.ram[variant.layout.tileMap + 16 * 20 + 1] = 0xed;
+    state = snapshot(fixture, reader);
+    assert.equal(state.values.battleMenu, "other"); assert.equal(reader.shouldWait(state, 0), false);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "press_down"));
+    assert.match(state.decisionSupport!.facts.join(" "), /choice screen, not a neutral animation/);
+    fixture.dialogue(["Choose a POKEMON", "TESTMON"], true);
+    fixture.ram[variant.layout.tileMap + 16 * 20 + 1] = 0xec;
+    state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, "other");
+    assert.equal(reader.shouldWait(state, 0), false); // Hollow party cursor: never auto-confirm a replacement.
+    fixture.dialogue(["A B C D E F G H I", "J K L M N O P Q R"], true);
+    state = snapshot(fixture, reader); assert.notEqual(state.values.battleMenu, "text_acknowledgment");
+    assert.equal(reader.shouldWait(state, 0), false);
+    fixture.ram[variant.layout.battleType] = 1;
+    fixture.dialogue(["TESTMON", "fainted!"]);
+    state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, undefined);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "wait"));
+  });
+
+  test(`${variant.name} does not mistake stale move names with a fainted actor for printing`, () => {
+    const fixture = new BattleFixture(variant), reader = variant.create();
+    fixture.ram[variant.layout.enemyMon + 2] = 0;
+    const state = snapshot(fixture, reader);
+    assert.equal(state.values.battleMenu, "other"); assert.equal(reader.shouldWait(state, 0), false);
+    assert.ok(!reader.availableActions(state, buttons).some(action => action.id.startsWith("use_move_")));
+  });
+
   test(`${variant.name} supplies ROM move metadata, STAB, dual types, and live PP without writes`, () => {
     const fixture = new BattleFixture(variant), reader = variant.create(), before = fixture.ram.slice();
     let state = snapshot(fixture, reader);
@@ -256,6 +386,29 @@ for (const variant of variants) {
     } finally { session.stop("Test finished."); }
   });
 }
+
+test("unknown fainting readiness is frame-bounded and cancelling settling sends no input or provider requests", async () => {
+  const fixture = new FaintingFixture(variants[0], Infinity);
+  const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+  let calls = 0;
+  const session = new AgentSession(fixture, { mode: "mock", visionProvider: "none", observer: createStateObserver(provider),
+    budget: new RequestBudget({ maxRequests: 1, timeoutMs: 1000, intervalMs: 0, retries: 0 }),
+    objectives: { goal: "Inspect unknown fainting", constraints: [], milestones: [] }, actionFrames: 24, maxDecisions: 1, maxSeconds: 60,
+    decider: { async decide(context) {
+      calls++; assert.equal(context.frame, 700); assert.equal(context.gameState!.values.battleMenu, "faint_pending");
+      assert.ok(context.actions.some(action => action.id === "press_a")); // Unknown readiness retains attempts after the ceiling.
+      return { actionId: "stop", confidence: 1, model: "fixture", probabilities: {}, usage: { inputTokens: 0, outputTokens: 0 } };
+    } },
+  });
+  try {
+    session.tick(100); session.pause(); session.tick(600);
+    assert.equal(fixture.frameNumber, 100); assert.equal(calls, 0);
+    session.resume(); session.tick(600);
+    assert.equal(fixture.frameNumber, 700); assert.equal(calls, 0);
+    await runAgentHeadless(fixture, session, new AbortController().signal);
+    assert.equal(calls, 1); assert.ok(fixture.inputs.every(input => input.buttons.length === 0));
+  } finally { session.stop("Test finished."); }
+});
 
 test("move execution tolerates transient printing, cancels changed actors, and cannot silently choose a different slot", () => {
   let state: PokemonMoveExecutionState = { menu: "moves", context: "battle1", selectedSlot: 1, usableSlots: [1, 2, 3] };

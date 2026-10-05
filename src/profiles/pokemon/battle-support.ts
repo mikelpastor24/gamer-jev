@@ -6,6 +6,7 @@ import type { PokemonBattleLayout } from "./battle-layout.js";
 import type { PokemonMoveExecutionState } from "./battle-execution.js";
 import { decodeName } from "./encoding.js";
 import { pokemonTypeNames } from "./types.js";
+import { PokemonBattleFlow } from "./battle-flow.js";
 
 interface MoveData { readonly name: string; readonly effect: number; readonly power: number; readonly type: number; readonly accuracy: number; readonly pp: number }
 interface MoveChoice { readonly slot: number; readonly id: number; readonly name: string; readonly usable: boolean; readonly summary: string; readonly explanation: string }
@@ -33,6 +34,7 @@ export class PokemonBattleSupport {
   private readonly moves = new Map<number, MoveData>();
   private chart: ReadonlyMap<string, number> | undefined;
   private snapshot: BattleSnapshot | undefined;
+  private readonly flow = new PokemonBattleFlow();
 
   constructor(private readonly layout: PokemonBattleLayout, private readonly monLayout: GenerationOneLayout) {
     for (const [name, address] of Object.entries(layout)) if (!Number.isSafeInteger(address) ||
@@ -40,7 +42,7 @@ export class PokemonBattleSupport {
       throw new Error("Invalid Generation I battle layout.");
     }
   }
-  reset(): void { this.loaded = false; this.moves.clear(); this.chart = undefined; this.snapshot = undefined; }
+  reset(): void { this.loaded = false; this.moves.clear(); this.chart = undefined; this.snapshot = undefined; this.flow.reset(); }
   executionState(): PokemonMoveExecutionState | undefined { return this.snapshot; }
   contextKey(state: GameState): string | undefined { return this.snapshot?.stateKey === stateKey(state.values) ? this.snapshot.context : undefined; }
 
@@ -79,19 +81,22 @@ export class PokemonBattleSupport {
 
   read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>): GameStateData {
     this.snapshot = undefined;
-    if (state.phase !== "battle" || state.battleType !== "normal") return { values: {}, descriptions: {} };
+    if (state.phase !== "battle" || state.battleType !== "normal") { this.flow.reset(); return { values: {}, descriptions: {} }; }
     this.load(memory);
     const u8 = (address: number) => ram[address - 0xc000]!;
     const player = ram.subarray(this.monLayout.battleMon - 0xc000, this.monLayout.battleMon - 0xc000 + 29);
     const enemy = ram.subarray(this.monLayout.enemyMon - 0xc000, this.monLayout.enemyMon - 0xc000 + 29);
+    const actors = createHash("sha256").update(player).update(enemy).digest("hex").slice(0, 24);
+    const tiles = ram.subarray(this.monLayout.tileMap - 0xc000, this.monLayout.tileMap - 0xc000 + 360);
+    const flow = this.flow.read(tiles, state, actors);
     const validMon = (mon: Uint8Array) => mon[0]! > 0 && mon[0]! <= 190 && mon[14]! > 0 && mon[14]! <= 100 &&
       mon[15]! * 256 + mon[16]! > 0 && mon[1]! * 256 + mon[2]! <= mon[15]! * 256 + mon[16]!;
-    if (!validMon(player)) return { values: {}, descriptions: {} };
+    if (!validMon(player)) return { values: {}, descriptions: {}, decisionSupport: { facts: flow.facts, actionFacts: flow.actionFacts } };
     const enemyValid = validMon(enemy), playerTypes = [...new Set([player[5]!, player[6]!])], enemyTypes = [...new Set([enemy[5]!, enemy[6]!])];
     const knownPlayerTypes = playerTypes.every(type => pokemonTypeNames[type]), knownEnemyTypes = enemyValid && enemyTypes.every(type => pokemonTypeNames[type]);
     const disabled = u8(this.layout.disabledMove), disabledSlot = (disabled & 15) > 0 ? disabled >> 4 : 0;
     const choices: MoveChoice[] = [];
-    const values: Record<string, StateValue> = {}, descriptions: Record<string, string> = {}, facts: string[] = [], actionFacts: Record<string, string[]> = {};
+    const values: Record<string, StateValue> = {}, descriptions: Record<string, string> = {}, facts: string[] = [...flow.facts], actionFacts: Record<string, readonly string[]> = { ...flow.actionFacts };
     for (let index = 0; index < 4; index++) {
       const id = player[8 + index]!, slot = index + 1, pp = player[25 + index]! & 0x3f;
       if (!id) continue;
@@ -117,7 +122,7 @@ export class PokemonBattleSupport {
       descriptions[`battleMove${slot}`] = "Active move slot: ROM-derived name, type, Generation I damage category, power, approximate base accuracy, live PP, STAB and matchup where applicable. Accuracy excludes stat stages; damage excludes stats and other modifiers.";
       choices.push({ slot, id, name: data?.name ?? `moveId=${id}`, usable, summary: summary.slice(0, 256), explanation });
     }
-    const layout = this.layout, tiles = ram.subarray(this.monLayout.tileMap - 0xc000, this.monLayout.tileMap - 0xc000 + 360);
+    const layout = this.layout;
     const regular = choices.length > 0 && choices.every((move, index) => move.slot === index + 1 && this.moves.has(move.id)) &&
       u8(layout.moveMenuType) === 0 && u8(layout.menuY) === 12 && u8(layout.menuX) === 5 &&
       u8(layout.numMovesMinusOne) === choices.length - 1 && u8(layout.menuMax) === choices.length + 1 &&
@@ -128,14 +133,15 @@ export class PokemonBattleSupport {
       return decodeName(Uint8Array.from([...row, 0x50])) === move.name;
     });
     const selected = u8(layout.menuItem);
-    const ready = namesVisible && enemyValid && player[1]! * 256 + player[2]! > 0 && enemy[1]! * 256 + enemy[2]! > 0 &&
+    const livingActors = enemyValid && player[1]! * 256 + player[2]! > 0 && enemy[1]! * 256 + enemy[2]! > 0;
+    const ready = namesVisible && livingActors &&
       selected >= 1 && selected <= choices.length && [0xec, 0xed].includes(tiles[(12 + selected) * 20 + 5]!);
     const command = /FIGHT/.test(String(state.screenTextBottom)) && /RUN/.test(String(state.screenTextBottom)) &&
       [14, 16].includes(Number(state.menuCursorY)) && [9, 15].includes(Number(state.menuCursorX));
-    const menu = ready ? "moves" : namesVisible ? "moves_pending" : command ? "command" : "other";
-    const context = createHash("sha256").update(Uint8Array.from([...player, ...enemy, disabled, u8(layout.playerPartyIndex), u8(layout.enemyPartyIndex)])).digest("hex").slice(0, 24);
+    const menu = flow.menu ?? (ready ? "moves" : namesVisible && livingActors ? "moves_pending" : command ? "command" : "other");
+    const context = flow.context ?? createHash("sha256").update(Uint8Array.from([...player, ...enemy, disabled, u8(layout.playerPartyIndex), u8(layout.enemyPartyIndex)])).digest("hex").slice(0, 24);
     values.battleMenu = menu; values.battleMoveSelection = ready ? selected : 0;
-    descriptions.battleMenu = "Confirmed normal move menu, temporarily printing move menu, main battle commands, or other/unknown battle screen. Semantic attack choices require a verified move menu.";
+    descriptions.battleMenu = "Verified moves/command menu, moves_pending printing, faint_pending neutral transition, text_acknowledgment requiring A/B, or other/unknown battle screen. Choices are never acknowledged automatically.";
     descriptions.battleMoveSelection = "Highlighted move slot, one based; zero when the cursor and RAM selection do not agree or another screen is visible.";
     const usableSlots = choices.filter(move => move.usable).map(move => move.slot);
     this.snapshot = { menu, selectedSlot: ready ? selected : 0, context, usableSlots, moves: choices, stateKey: stateKey({ ...state, ...values }) };
@@ -147,7 +153,7 @@ export class PokemonBattleSupport {
       for (const move of choices) if (move.usable) actionFacts[`use_move_${move.slot}`] = [move.summary, move.explanation];
       const highlighted = choices.find(move => move.slot === selected)!;
       actionFacts.press_a = [`A confirms slot ${selected}: ${highlighted.name}. ${highlighted.usable ? "" : "This move cannot be used: no PP or disabled."}`, highlighted.summary, highlighted.explanation];
-    } else if (command) {
+    } else if (menu === "command") {
       actionFacts.press_a = [`A confirms the highlighted battle command: ${String(state.menuCursorRow)}. FIGHT opens the move menu; it does not choose an attack yet.`];
     }
     return { values, descriptions, decisionSupport: { facts, actionFacts } };
@@ -162,6 +168,7 @@ export class PokemonBattleSupport {
     }));
   }
   allows(state: GameState, button: string): boolean {
+    if (state.values.battleMenu === "text_acknowledgment") return ["A", "B"].includes(button);
     if (state.values.battleMenu === "moves_pending") return false;
     if (state.values.battleMenu !== "moves") return true;
     if (!["A", "B", "UP", "DOWN"].includes(button)) return false;

@@ -87,7 +87,7 @@ export class GenerationOnePokemonReader implements GameReader {
       if (this.controlMap !== undefined && this.controlMap !== state.values.mapId) this.mapChangedAt = frame;
       this.controlMap = state.values.mapId;
     }
-    return state.values.gameStarted === true && (state.values.phase === "transition" || state.values.battleMenu === "moves_pending" || this.resources?.pending(state) || state.values.movementInProgress === true || state.values.controlBusy === true ||
+    return state.values.gameStarted === true && (state.values.phase === "transition" || ["moves_pending", "faint_pending"].includes(String(state.values.battleMenu)) || this.resources?.pending(state) || state.values.movementInProgress === true || state.values.controlBusy === true ||
       state.values.phase === "overworld" && frame - this.mapChangedAt < 60);
   }
   createExecution(memory: GameReaderMemory, action: AgentAction) {
@@ -207,7 +207,7 @@ export class GenerationOnePokemonReader implements GameReader {
   availableActions(state: GameState, actions: readonly AgentAction[]): readonly AgentAction[] {
     this.pulseFrames = Math.min(actions.find(action => action.id === "wait")?.frames ?? 8, 8);
     const emptyPartySelection = state.values.menuKind === "overworld" && state.values.menuSelection === "POKEMON" && state.values.partyCount === 0;
-    return [...this.support.actions(state), ...(this.combat?.actions(state) ?? []), ...(this.resources?.actions(state) ?? []), ...actions.filter((action) => action.stop || action.id === "wait" || state.values.phase !== "transition" && action.buttons.length === 1 &&
+    return [...this.support.actions(state), ...(this.combat?.actions(state) ?? []), ...(this.resources?.actions(state) ?? []), ...actions.filter((action) => action.stop || action.id === "wait" && state.values.battleMenu !== "text_acknowledgment" || state.values.phase !== "transition" && action.buttons.length === 1 &&
       !(emptyPartySelection && action.buttons[0] === "A") && (this.resources?.quantity(state) || this.support.allows(state, action.buttons[0]!)) && (this.combat?.allows(state, action.buttons[0]!) ?? true) && (this.resources?.allows(state, action.buttons[0]!) ?? true))
       .map((action) => {
         if (action.stop || action.id === "wait") return action;
@@ -225,7 +225,7 @@ export class GenerationOnePokemonReader implements GameReader {
         const evidence = state.decisionSupport?.actionFacts[action.id] ?? [];
         const description = descriptions[button] ?? (menu || state.values.phase === "battle" ? `Move the menu cursor ${button.toLowerCase()} where supported.` : `Move or turn ${button.toLowerCase()} in the overworld; navigate choices during the intro.`);
         // Menu repeats can skip choices with long holds. Preserve user-configured shorter durations.
-        const frames = Math.min(action.frames, 8);
+        const frames = Math.min(action.frames, state.values.battleMenu === "text_acknowledgment" ? 1 : 8);
         const detail = evidence.join(" ");
         const availabilityKey = [state.values.phase, state.values.mapId ?? "intro",
           ...(state.values.phase === "overworld" ? [state.values.playerX, state.values.playerY, state.values.facing] : []),

@@ -77,6 +77,22 @@ cartridge metadata checks cover all three and a Red replay verified slot 2
 execution without APIs or overwriting the original checkpoint. This does not
 establish full battle legality, damage prediction, or live Jev performance.
 
+`PokemonBattleFlow` distinguishes normal-battle fainting transitions from
+verified bottom text continuation prompts. A decoded 0-HP actor with no
+visible choice/continuation requests neutral settling through `faint_pending`;
+the runner skips Jev and vision for at most 600 frames, then preserves unknown
+controller attempts. A complete dialogue box/arrow without a cursor or naming
+grid exposes `text_acknowledgment`, A/B/stop and clear input-needed facts,
+excluding ineffective wait/directional/menu inputs. Only Jev chooses the
+single-frame acknowledgment; never auto-press through text or a party/YES-NO
+choice. One private fingerprint retains meaning across arrow blinking and
+changes with text/actors/screen; reset/restore clears it. Stale move names with
+fainted actors are not `moves_pending`. Synthetic checks cover all three;
+an isolated Red replay verified one fixture-selected A reaches EXP text after
+600 neutral frames failed to advance the fainted message, with no API requests
+or changes to the original checkpoint. This is not full switching legality
+or live Jev validation.
+
 `PokemonItemSupport` owns inventory, capture and Mart choices inside the profile.
 Exact `item-layout.ts` addresses decode at most 83 ROM item names/prices; reset
 and restore clear that catalog and private menu snapshots. Expose ordinary ball
