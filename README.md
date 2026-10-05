@@ -164,6 +164,14 @@ working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
 [JSON profile](examples/demo-profile.json) without implementing another class.
 See [Pokémon readers](docs/pokemon-readers.md) for the supported hashes,
 decoded fields, limits, and extending the shared Gen I reader to other revisions.
+They also expose named inventory, ordinary capture-ball counts, team-preparation
+facts and explicit capture/Mart item choices. Jev chooses a bag or ball slot;
+shop item selection leaves quantity and price confirmation to later decisions.
+Visible pickups are distinguished from starter sprites using cartridge object
+flags. Early supply-route facts can guide a detour to Viridian/Pewter Mart when
+balls are missing. Custom objectives remain authoritative; use **Settings →
+Agent → Objectives → Use game defaults** to review the expanded preparation
+constraints. These facts do not establish live team-building competence.
 Pokémon readers also supply profile-owned decision facts: live walking collision,
 objects/signs, exits, and local route distances with the first available inputs.
 They retain bounded recent text from completed conversations and warn when A

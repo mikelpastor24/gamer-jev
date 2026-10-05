@@ -17,6 +17,7 @@ import { runAgentHeadless } from "../src/runner/agent-headless.js";
 import { RequestBudget } from "../src/providers/requests.js";
 import { RED_BLUE_NAVIGATION, YELLOW_NAVIGATION } from "../src/profiles/pokemon/navigation-layout.js";
 import { cartridge, forestJourney } from "./fixtures/pokemon-world.js";
+import { RED_BLUE_ITEMS, YELLOW_ITEMS } from "../src/profiles/pokemon/item-layout.js";
 
 const variants = [
   { name: "Red", descriptor: POKEMON_RED_DESCRIPTOR, layout: POKEMON_RED_LAYOUT, create: createPokemonRedReader },
@@ -341,6 +342,42 @@ for (const variant of variants) {
     assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join("\n"), /Object 1/);
   });
 
+  test(variant.name + " identifies visible cartridge pickups without confusing starter sprites or trainers", () => {
+    const world = cartridge(variant.name === "Yellow", [{ id: 38, warps: [] }]);
+    const { fixture, navigation, setTile } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length;
+    const items = variant.name === "Yellow" ? YELLOW_ITEMS : RED_BLUE_ITEMS;
+    let names = items.names;
+    for (let id = 1; id <= 83; id++) {
+      const text = textBytes(id === 21 ? "SUPPLY" : "UNKNOWN");
+      world.bytes.set([...text, 0x50], names); names += text.length + 1;
+    }
+    const objects = 5 * 0x4000 + 0x1800;
+    world.bytes.set([0, 3, 61, 9, 7, 0, 0, 0x81, 21, 61, 10, 8, 0, 0, 1,
+      1, 11, 9, 0, 0, 0x41, 201, 1], objects + 2);
+    setTile(3, 5, 0);
+    fixture.ram[navigation.spriteCount] = 3;
+    for (let sprite = 1; sprite <= 3; sprite++) {
+      fixture.ram[0xc100 + sprite * 16] = sprite === 3 ? 1 : 61;
+      fixture.ram.set([8 + sprite, 6 + sprite], 0xc200 + sprite * 16 + 4);
+    }
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.match(snapshot.actions.find(action => action.id === "interact_object_1")!.description, /pick up Item ball: SUPPLY/);
+    assert.match(snapshot.state.decisionSupport!.actionFacts.press_a!.join(" "), /SUPPLY.*subsequent inventory/);
+    assert.doesNotMatch(snapshot.actions.find(action => action.id === "interact_object_2")!.description, /pick up|Item ball:/);
+    assert.doesNotMatch(snapshot.actions.find(action => action.id === "interact_object_3")!.description, /pick up|Item ball:/);
+    fixture.ram[variant.layout.bagCount] = 20;
+    fixture.ram.set(Array.from({ length: 20 }, (_, i) => [i + 1, 1]).flat(), variant.layout.bagItems);
+    snapshot = provider.read(fixture.captureFrame());
+    assert.match(snapshot.actions.find(action => action.id === "interact_object_1")!.description, /No free bag slot/);
+    fixture.ram.set([1, 9, 255], navigation.hiddenList); fixture.ram[navigation.hiddenFlags + 1] = 2;
+    assert.ok(!provider.read(fixture.captureFrame()).actions.some(action => action.id === "interact_object_1"));
+    fixture.ram[navigation.hiddenList] = 255;
+    fixture.ram[0xc110] = 2; // Mismatched live sprite must not inherit another object's pickup semantics.
+    assert.doesNotMatch(provider.read(fixture.captureFrame()).actions.find(action => action.id === "interact_object_1")!.description, /pick up|Item ball:/);
+  });
+
   test(`${variant.name} waits through real movement and retains unknown surfing and Strength inputs`, () => {
     const { fixture, navigation, setTile } = navigationFixture(variant);
     const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
@@ -493,6 +530,8 @@ for (const variant of variants) {
     tiles.set([...textBytes("RIVAL"), 0xbd, ...textBytes(" NAME"), 0xe6], 20);
     assert.equal(state(fixture).values.namingPrompt, "RIVAL's NAME?");
     tiles[5 * 20 + 2] = 0xa0;
+    assert.equal(state(fixture).values.phase, "naming");
+    fixture.ram[layout.battleKind] = 1; // A capture can keep the battle flag set during nickname entry.
     assert.equal(state(fixture).values.phase, "naming");
     tiles[5 * 20 + 2] = 0;
     assert.equal(state(fixture).values.enteredName, undefined);

@@ -74,7 +74,7 @@ records follow the workflows in the [README](../README.md).
 | `locationName`, `navigationStatus`, `movementInProgress`, `controlBusy`, `stepUP/DOWN/LEFT/RIGHT` | Known location names, live movement/control timing, and walking/turning/blocked/unknown evidence |
 | `standingExit`, `exitTriggerInputs` | Warp underfoot and decoded outward inputs for facing-edge exits; an applicable step is marked `exit_trigger` |
 | `money`, `badgeCount`, `badges`, `pokedexOwned`, `pokedexSeen` | Packed-BCD money, badge flags, and 151-species bit counts |
-| `bagCount`, `bagItems` | Occupied bag slots and internal item ID/quantity pairs |
+| `bagCount`, `bagItems`, `pokeBalls` | Occupied bag slots, internal item ID/quantity pairs and total ordinary capture balls; names and quantities appear in bounded decision facts |
 | `partyCount`, `party1` through `party6`, corresponding `Moves` fields | Nicknames, internal species IDs, levels, big-endian HP, types, status, and move IDs/PP |
 | `battleKind`, `battleType`, `battlePlayer`, `battlePlayerMoves`, `battleEnemy` | Active battle data, including current HP and normal/demo/Safari variant |
 | `battleMove1` through `battleMove4` | Active normal-battle moves: name, type, Gen I category, power, approximate base accuracy, live PP, effect hints, and ordinary damage multipliers when applicable |
@@ -140,11 +140,75 @@ A is excluded on a move without PP or a disabled move. Ineffective horizontal,
 START and move-swapping SELECT inputs are excluded in this confirmed menu.
 Demonstration, Safari, move-learning/Mimic prompts and unknown screens retain
 their existing controller attempts. Party switching, items, and complete
-battle-command legality are not implemented as semantic actions.
+battle-command legality remain partial. Capture and Mart choices are described below.
 
 Inspect these fields and choices through **Game state** or the dashboard's
 Jev request/response inspection, including when using direct TypeSafe without
 vision. Jev chooses the attack; the reader never substitutes a stronger move.
+
+### Capture, inventory and visible loot
+
+[`PokemonItemSupport`](../src/profiles/pokemon/item-support.ts) adds inventory,
+capture and preparation evidence without another model call. Its catalog reads
+at most 83 item names and prices from the user's cartridge; exact ROM offsets
+and RAM menu/storage addresses are in
+[`item-layout.ts`](../src/profiles/pokemon/item-layout.ts). Reset/restore clears
+the bounded catalog and menu snapshot. Observations contain decoded facts,
+never cartridge bytes.
+
+Jev receives ordinary ball counts, named inventory slots, party size and
+storage limits, enemy HP/status and the live catch-rate threshold. That
+threshold is not a success percentage. Facts explain that defeating a wild
+target prevents capture and that lower HP and supported status conditions can
+help. Known enemy types absent from the party identify potential coverage;
+coverage and party size do not establish gym readiness. Trainer, demonstration,
+Safari, fainted/transitional and unverified ghost encounters have no ordinary
+capture actions. Full parties require space in the current PC box; a stored
+capture does not immediately join the party.
+
+In a confirmed normal wild battle, `open_capture_bag` opens ITEM and stops.
+Jev then chooses `throw_ball_slot_N` from a verified bag menu. Each action
+uses exactly one selected Master/Ultra/Great/Poke Ball, with one confirmation
+frame. Safari balls are excluded from these choices. The executor never
+chooses another ball, weakens the target automatically, or retries a throw.
+Changed actors, HP/status, inventory, capacity or menus end the action;
+ignored controls and all execution remain bounded to 600 frames. Generic A
+uses the highlighted item and is protected against changed inventory or
+selection. Nickname grids take precedence over a lingering battle flag.
+
+The navigation adjunct distinguishes visible pickups using cartridge object
+flags and item IDs, matched to live visible sprites. Their existing
+`interact_object_N` choices say **pick up**, name the item when available and
+warn when a new bag slot is needed. A ball-shaped starter sprite is not
+classified as loot. Hidden items are not enumerated. An interaction attempts
+collection; inventory/object changes provide evidence of its result.
+
+### Buying supplies and preparing the team
+
+A verified Mart BUY list offers `choose_shop_item_slot_N` for items with
+known prices and at least one affordable/storable unit. These choices select
+the item and stop at the quantity prompt. Jev chooses UP/DOWN, accepts the
+quantity, and separately confirms the displayed total price with YES.
+Cursorless quantity boxes are recognized from their RAM and displayed value;
+ordinary dialogue does not acquire quantity controls. Selecting an item never
+automatically purchases it. Selling, deposits and most other item uses retain
+generic controller choices.
+
+When capture balls are missing in the early region, local exit facts also
+identify directions that lead closer to Viridian/Pewter Mart using static
+walking areas and exact landing warps. These supply facts remain separate
+from the story milestone. They neither select a detour nor prove that a
+shop/script is currently accessible. Money, bag space and shop prerequisites
+still matter. Default constraints encourage useful captures, visible loot,
+healing and training before gyms; custom constraints remain authoritative.
+Existing edited objectives are preserved. To adopt the new suggestions, use
+**Settings → Agent → Objectives → Use game defaults**, review and apply.
+
+The reference's [battle decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/battle.ts)
+and [overworld decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/overworld.ts)
+informed this original implementation. Its estimated capture probabilities
+and persistent Jev-selected focus are not implemented here. These additions
+make opportunities explicit; live Jev team-building competence is unverified.
 
 When the complete START menu is visible and POKEMON is selected with an empty
 party, the reader excludes A: that selection cannot open the party screen.
@@ -284,8 +348,8 @@ inspired these original adaptations. It also asks Jev for a persistent focus
 such as progress or healing, tags repeated ineffective options, and sometimes
 samples an alternative after repeated failure. This project currently adds
 regional facts and crossing memory; it always executes Jev's selected action.
-Persistent Jev-selected focus, service routing, and dynamic regional refinements
-remain future work.
+Persistent Jev-selected focus, broader service routing, and dynamic regional
+refinements remain future work. Early capture-supply routes are described above.
 
 These are decoded mechanical facts, not universal legal-command guarantees.
 Unknown or uninitialized collision data preserves directional attempts. Surfing
@@ -307,7 +371,7 @@ and known menu/text phases use the additional availability rules above. Unknown
 menus and battle screens outside the confirmed move menu retain single-button attempts: a control can do nothing if the
 current screen ignores it. The reader does not claim to enumerate every legal in-game command
 or exclude every ineffective input. Jev selects every offered gameplay action.
-The optional executors implement only the selected destination or move slot;
+The optional executors implement only the selected destination, move or item slot;
 they do not choose battle moves, new destinations, or a walkthrough on the
 model's behalf.
 
@@ -315,7 +379,7 @@ model's behalf.
 
 All three readers supply default objectives in
 [`objectives.ts`](../src/profiles/pokemon/objectives.ts): become League Champion,
-two constraints about useful exploration and preparation, and 16 story
+four constraints about exploration, preparation, capture and supplies, and 16 story
 milestones from leaving the house through the League. Yellow's starter guidance
 describes receiving Pikachu rather than choosing a Red/Blue starter.
 These suggestions load automatically for a fresh ROM in manual or agent mode.
@@ -390,6 +454,9 @@ a selected destination;
 `battle-support.ts` decodes move/type facts and menu availability;
 `battle-execution.ts` retains the selected attack slot, and `battle-layout.ts`
 supplies exact cartridge and battle-menu addresses.
+`item-support.ts` supplies capture/inventory/Mart facts and choices;
+`item-catalog.ts` caches bounded decoded names/prices, `item-layout.ts` supplies
+revision addresses, and `item-execution.ts` follows only the selected menu target.
 [`red.ts`](../src/profiles/pokemon/red.ts),
 [`blue.ts`](../src/profiles/pokemon/blue.ts), and
 [`yellow.ts`](../src/profiles/pokemon/yellow.ts) supply each exact revision.
@@ -443,6 +510,9 @@ English disassemblies:
 - [Red/Blue named event bits](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/event_constants.asm)
 - [Yellow named event bits](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/constants/event_constants.asm)
 - [Key item IDs](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/item_constants.asm)
+- [Item list and quantity menus](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/home/list_menu.asm)
+- [Mart selection and purchase confirmation](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/events/pokemart.asm)
+- [Capture restrictions and ball effects](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/items/item_effects.asm)
 - [Move record properties](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/data/moves/moves.asm)
 - [Generation I type-effect table](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/data/types/type_matchups.asm)
 - [Move effects](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/move_effect_constants.asm)
@@ -486,6 +556,19 @@ battle; it did not establish an uninterrupted trip through the forest.
 Full-game
 play and live Jev performance have not been verified. Yellow-specific follower
 behavior and Pikachu's happiness are not decoded by the shared reader.
+
+Item tests use invented names, prices, RAM and menus for all three readers.
+They cover inventory bounds, capture exclusions, selected-slot execution,
+stale highlights/inventory, quantity prompts, shop identity changes, visible
+pickup flags and hidden/mismatched sprites. A mock session verifies that capture
+facts and choices reach the Jev request and only the selected ball executes,
+with a final release and no HTTP attempts. Local read-only checks matched
+Poke Ball/Potion names and prices and the three visible forest pickups in each
+cartridge. An isolated Red replay followed fixture-selected routes to Viridian
+Mart, selected a shop item, purchased one ball and threw that selected ball at
+a wild Pidgey. The ball was consumed without catching the target. It made no
+provider requests and preserved the original checkpoint. This establishes
+menu/execution mechanics, not live Jev capture strategy.
 
 These readers supply observations and local wayfinding, not a complete Pokémon
 agent. Dynamic region-aware routing, gate/script prerequisites, full battle-command

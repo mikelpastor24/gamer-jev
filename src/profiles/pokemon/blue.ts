@@ -4,6 +4,7 @@ import { POKEMON_RED_BLUE_LAYOUT } from "./red-blue-layout.js";
 import { RED_BLUE_NAVIGATION } from "./navigation-layout.js";
 import { pokemonObjectives } from "./objectives.js";
 import { RED_BLUE_BATTLE } from "./battle-layout.js";
+import { RED_BLUE_ITEMS } from "./item-layout.js";
 
 // Exact English Blue release: SHA-1 d7037c83e1ae5b39bde3c30787637ba1d4c48ce2.
 // Shares the verified Red/Blue RAM layout, not Red's ROM identity.
@@ -15,5 +16,5 @@ export const POKEMON_BLUE_DESCRIPTOR: GameReaderDescriptor = {
 export const POKEMON_BLUE_LAYOUT = POKEMON_RED_BLUE_LAYOUT;
 
 export function createPokemonBlueReader(): GenerationOnePokemonReader {
-  return new GenerationOnePokemonReader(POKEMON_BLUE_DESCRIPTOR, POKEMON_BLUE_LAYOUT, RED_BLUE_NAVIGATION, pokemonObjectives("choice"), RED_BLUE_BATTLE);
+  return new GenerationOnePokemonReader(POKEMON_BLUE_DESCRIPTOR, POKEMON_BLUE_LAYOUT, RED_BLUE_NAVIGATION, pokemonObjectives("choice"), RED_BLUE_BATTLE, RED_BLUE_ITEMS);
 }

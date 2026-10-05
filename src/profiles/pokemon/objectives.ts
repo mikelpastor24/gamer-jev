@@ -7,6 +7,8 @@ export function pokemonObjectives(starter: "choice" | "pikachu"): Objectives {
     constraints: [
       "Use dialogue and observed game state to decide the next useful destination. Complete necessary story prerequisites before attempting later milestones.",
       "Keep the party healthy and prepare for battles. Repeated menu toggles, completed conversations, and pacing between equivalent exits do not advance the story.",
+      "Prepare useful type coverage and backup before gyms: buy capture balls when needed, consider suitable wild Pokemon, weaken without knocking them out, and select a ball explicitly. Heal and train new members; party size alone does not prove readiness.",
+      "Consider reachable visible item balls for useful supplies and key items. Check bag capacity, money, HP, levels and move PP before continuing; choose shopping or healing detours when needed instead of repeatedly attempting an unprepared gym.",
     ],
     milestones: [
       "Leave the player's house: use the stairs from the upper floor, reach a ground-floor exit mat, and press toward the outside. Walk north from Pallet Town toward Route 1 to meet Professor Oak.",

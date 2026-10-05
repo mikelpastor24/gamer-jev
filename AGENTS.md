@@ -77,6 +77,36 @@ cartridge metadata checks cover all three and a Red replay verified slot 2
 execution without APIs or overwriting the original checkpoint. This does not
 establish full battle legality, damage prediction, or live Jev performance.
 
+`PokemonItemSupport` owns inventory, capture and Mart choices inside the profile.
+Exact `item-layout.ts` addresses decode at most 83 ROM item names/prices; reset
+and restore clear that catalog and private menu snapshots. Expose ordinary ball
+counts, bounded named inventory facts, party/storage capacity and known capture
+evidence; catch-rate thresholds are not probabilities. Unknown team types do
+not establish missing coverage. Normal verified wild commands/moves offer
+`open_capture_bag`; a verified bag offers `throw_ball_slot_N`. Jev selects each
+step. Exclude trainers, demo/Safari, dead/transitional actors, full party plus
+full/unknown storage and unverified Tower ghosts/scripted Marowak. Executions
+follow the same selected bag/item, confirm once, settle opening within 120
+frames and stop on context changes or the 600-frame ceiling. Generic A protects
+the inventory/highlight meaning. Nickname grids precede lingering battle flags.
+
+Verified priced Mart lists offer `choose_shop_item_slot_N` only for known
+affordable/storable items. Selecting opens quantity; never buy or choose a
+quantity inside that executor. Cursorless purchase quantity prompts require
+matching RAM/display values and expose only A/B/UP/DOWN with quantity keys.
+Jev separately confirms the total price. Unknown, selling and other item menus
+retain controller attempts. Visible pickup labels require cartridge item flags
+and matching live sprites; starter balls/trainers are not loot. Hidden items
+are not enumerated. Collection remains an attempt until observed state changes.
+Early missing-ball guidance uses Viridian/Pewter Mart goals, at most four
+goals per distance query and one retained distance table. It must not choose
+a service detour or overwrite the story goal. Editable defaults add preparation,
+capture and loot constraints while preserving the exact 16 milestone strings.
+All three local cartridges verified item names/prices and visible forest object
+metadata. An isolated Red replay selected a Mart item, bought one ball and threw
+that selected ball without capturing the target. It used fixture choices, no
+APIs, and preserved the original checkpoint; this is not live Jev validation.
+
 Readers optionally implement `setObjectives`, `createExecution`, and `shouldWait`.
 An offered `execution: "profile"` action has no fixed buttons and a 1–600-frame
 ceiling. Only Jev selects it. Its read-only executor emits one validated frame

@@ -7,6 +7,7 @@ import { PokemonRegionGraph } from "./region-graph.js";
 import { PokemonRouteFeedback, type PokemonRoute, type PokemonRouteOutcome } from "./navigation-execution.js";
 import { pokemonLocation as location } from "./locations.js";
 import { PokemonTravelMemory } from "./travel-memory.js";
+import type { PokemonItemCatalog } from "./item-catalog.js";
 
 const directions = [
   { name: "up", button: "UP", dx: 0, dy: -1, facing: 4, connection: 8 },
@@ -21,6 +22,7 @@ interface Target extends Point {
   readonly label: string; readonly interact: boolean; readonly boulder?: boolean;
   readonly destination?: number; readonly triggers?: readonly Direction[]; readonly squares?: readonly Point[];
   readonly boundary?: Direction;
+  readonly pickup?: string;
 }
 const key = ({ x, y }: Point) => `${x},${y}`;
 const actionId = (direction: Direction) => `press_${direction.name}`;
@@ -58,7 +60,7 @@ export class GenerationOneDecisionSupport {
   actions(state: GameState): readonly AgentAction[] {
     if (state.values.phase !== "overworld" || state.values.movementInProgress) return [];
     return [...this.routes.values()].map(route => ({ id: route.id, description: [
-      `${route.interact ? "Approach and interact with" : "Walk to"} ${route.label}. ${route.length} local step(s).`,
+      `${route.label.startsWith("Item ball:") ? "Approach and pick up" : route.interact ? "Approach and interact with" : "Walk to"} ${route.label}. ${route.length} local step(s).`,
       route.navigationFact ?? (route.towardObjective ? "A known interaction relates to the active supplied milestone." : "Choose only if useful for the user's goal or constraints."),
       ...(route.destination === undefined ? [] : this.travel.routeFacts(Number(state.values.mapId), route.destination)),
       this.attempts.attempts(route) ? `Already attempted ${this.attempts.attempts(route)} time(s) without a new shortest distance or map change. Repeating the same partial approach is not new progress.` : "",
@@ -67,7 +69,7 @@ export class GenerationOneDecisionSupport {
       availabilityKey: `${route.context}:${route.id}` }));
   }
 
-  read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, inventory: readonly number[] = []): GameStateData {
+  read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, inventory: readonly number[] = [], items?: PokemonItemCatalog): GameStateData {
     this.routes.clear();
     const facts: string[] = [];
     const actionFacts: Record<string, string[]> = {};
@@ -200,7 +202,11 @@ export class GenerationOneDecisionSupport {
       const point = { x: u8(0xc200 + index * 16 + 5) - 4, y: u8(0xc200 + index * 16 + 4) - 4 };
       const picture = u8(0xc100 + index * 16), boulder = picture === 0x3f;
       const names: Readonly<Record<number, string>> = { 2: "Rival", 3: "Professor Oak", 38: "Shop clerk", 41: "Nurse", 51: "Mother", 61: "Poke Ball", 63: "Boulder", 65: "Pokedex" };
-      if (inside(point)) objects.push({ ...point, id: `interact_object_${index}`, label: `${names[picture] ?? "Object"} ${index}`, interact: true, boulder });
+      const metadata = this.graph.object(Number(state.mapId), index, romByte, layout, memory.romByteLength ?? 0);
+      const item = metadata?.picture === picture ? metadata.item : undefined;
+      const pickup = item && item < 255 ? `${items?.name(item) ?? `itemId=${item}`}. ${state.bagCount === 20 && !inventory.includes(item) ? "No free bag slot for this item type; make space before collecting." : "A attempts collection; only a subsequent inventory/object change confirms the result."}` : undefined;
+      if (inside(point)) objects.push({ ...point, id: `interact_object_${index}`, label: pickup ? `Item ball: ${items?.name(item!) ?? `itemId=${item}`} (object ${index})` : `${names[picture] ?? "Object"} ${index}`,
+        interact: true, boulder, ...(pickup ? { pickup } : {}) });
     }
     const occupied = new Set(objects.map(key));
     const warps: Target[] = [];
@@ -297,7 +303,7 @@ export class GenerationOneDecisionSupport {
     const interactable = [...objects, ...signs];
     const ahead = front ? interactable.find(target => key(target) === key(front) || facing && counters.has(tile(front.x, front.y)) &&
       target.x === front.x + facing.dx && target.y === front.y + facing.dy) : undefined;
-    actionFacts.press_a = [ahead ? `Facing ${ahead.label} at (${ahead.x},${ahead.y}). A interacts with it.` : "No decoded object or sign is in front. A may examine background scenery; it does not walk or open START."];
+    actionFacts.press_a = [ahead ? `Facing ${ahead.label} at (${ahead.x},${ahead.y}). A interacts with it.${ahead.pickup ? ` ${ahead.pickup}` : ""}` : "No decoded object or sign is in front. A may examine background scenery; it does not walk or open START."];
     facts.push("Routes are local distances from the current map, not a walkthrough or verified goal progress. Jev chooses which exit or interaction is useful. Objects may move and scripts can block apparent routes.");
     facts.push("Walking finishes over several frames. A released short press can still be moving at action completion; wait when movementInProgress is true.");
 
@@ -327,7 +333,7 @@ export class GenerationOneDecisionSupport {
         return goals;
       }).filter(inside);
     };
-    const targets = [...warpTargets, ...objects.slice(0, 10), ...signs.slice(0, 4)];
+    const targets = [...warpTargets, ...objects, ...signs.slice(0, 4)];
     for (const direction of directions) if (connectionMask & direction.connection) {
       const candidates: Point[] = [];
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -339,6 +345,9 @@ export class GenerationOneDecisionSupport {
       if (exit) targets.push({ ...exit, id: `go_boundary_${direction.name}`, destination: u8(layout.connections + 1 + directions.indexOf(direction) * 11), boundary: direction,
         label: `${direction.name} boundary to ${location(u8(layout.connections + 1 + directions.indexOf(direction) * 11))}`, interact: false });
     }
+    const earlyGame = [0, 1, 2, 12, 13, 33, 37, 38, 39, 40, 41, 42, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58].includes(Number(state.mapId));
+    const supplies = earlyGame && state.pokeBalls === 0 && Number(state.partyCount) > 0 ? this.graph.guidanceToAny(Number(state.mapId), player, [42, 56], romByte, layout, memory.romByteLength ?? 0) : undefined;
+    if (supplies?.here !== undefined) facts.push(`Capture supplies are empty. Viridian/Pewter Mart is ${supplies.here} static walking-area transition(s) away; supplies require money, bag space and completed shop prerequisites. Supply detours are optional Jev choices, separate from the story milestone.`);
     const regional = progress?.objective ? this.graph.guidance(Number(state.mapId), player, progress.objective.map,
       romByte, layout, memory.romByteLength ?? 0) : undefined;
     if (progress?.objective) facts.push(`Navigation uses separate walking areas and exact warp landing coordinates, not just map IDs. ${regional?.here === undefined ? "The static regional route to the active milestone is unknown." : `The current walking area is ${regional.here} static area transition(s) from the milestone's map.`} Trees, water, scripts, moving objects and other special mechanics can change access; this is not verified story progress.`);
@@ -351,17 +360,18 @@ export class GenerationOneDecisionSupport {
       const mask = best.reduce((bits, point) => bits | first[indexOf(point)]!, 0);
       const next = length === 0 ? target.boundary ? [target.boundary] : target.squares && standingWarp ? [...standingWarp.triggers!] : [] : directions.filter((_direction, index) => mask & 1 << index);
       let towardObjective = false;
-      let navigationFact: string | undefined;
+      let navigationFact: string | undefined = target.pickup;
+      const landingDistances = (guidance: typeof regional) => target.destination === undefined ? [] : target.boundary ? [guidance?.exitDistance({ ...target, destination: target.destination,
+        direction: directions.indexOf(target.boundary) })] : warps.filter(warp =>
+        (target.squares ?? [target]).some(point => key(point) === key(warp))).map(warp =>
+        guidance?.exitDistance({ ...warp, destination: target.destination!, warp: Number(warp.id!.slice(8)) - 1 }));
+      const consistent = (distances: readonly (number | undefined)[]) => distances.length && distances.every(value => value !== undefined && value === distances[0]) ? distances[0] : undefined;
       if (progress?.objective) {
         const objective = progress.objective;
         if (target.destination !== undefined) {
           const here = regional?.here;
-          const landings = target.boundary ? [regional?.exitDistance({ ...target, destination: target.destination,
-            direction: directions.indexOf(target.boundary) })] : warps.filter(warp =>
-              (target.squares ?? [target]).some(point => key(point) === key(warp))).map(warp =>
-              regional?.exitDistance({ ...warp, destination: target.destination!, warp: Number(warp.id!.slice(8)) - 1 }));
           // A grouped doorway can be reached on either square; differing landing areas remain unknown.
-          const there = landings.length && landings.every(distance => distance !== undefined && distance === landings[0]) ? landings[0] : undefined;
+          const there = consistent(landingDistances(regional));
           towardObjective = length !== null && there !== undefined && (target.destination === objective.map || here !== undefined && there < here);
           navigationFact = there === undefined ? "Regional route to the active supplied milestone is unknown; shared map IDs alone do not establish onward travel." :
             `${towardObjective ? "Leads toward" : here !== undefined && there > here ? "Leads away from" : "Does not establish a closer route to"} the active supplied milestone (${there} static walking-area transition(s) from its map). Scripts and special mechanics may change access.`;
@@ -376,6 +386,10 @@ export class GenerationOneDecisionSupport {
         } else if (state.mapId === objective.map && target.interact) {
           towardObjective = objective.id === "starter" ? layout.collisionBank === 1 ? target.label.startsWith("Professor Oak") : target.label.startsWith("Poke Ball") : target.label.startsWith("Professor Oak") || target.label.startsWith("Shop clerk");
         }
+      }
+      const supplyDistance = consistent(landingDistances(supplies));
+      if (length !== null && supplies?.here !== undefined && supplyDistance !== undefined && supplyDistance < supplies.here) {
+        navigationFact = `${navigationFact ?? ""} Leads closer to a Viridian/Pewter Mart for missing capture supplies (${supplyDistance} static area transition(s)). This does not select a detour or establish shop availability.`.trim().slice(0, 500);
       }
       if (length !== null && target.id) {
         candidateRoutes.push({ id: target.id, context: this.contextKey, label: target.label, length, nextButtons: next.map(direction => direction.button),

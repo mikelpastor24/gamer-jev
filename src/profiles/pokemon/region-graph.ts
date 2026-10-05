@@ -28,22 +28,34 @@ export class PokemonRegionGraph {
   private maps: Map<number, RegionMap> | undefined;
   private readonly reverse = new Map<number, Set<number>>();
   private distances = new Map<number, number>();
-  private goal: number | undefined;
+  private goal = "";
   private nodes = 0;
   private edges = 0;
 
   reset(): void {
     this.headers.reset(); this.maps = undefined; this.reverse.clear(); this.distances.clear();
-    this.goal = undefined; this.nodes = 0; this.edges = 0;
+    this.goal = ""; this.nodes = 0; this.edges = 0;
   }
 
   guidance(map: number, player: Point, goal: number, byte: (offset: number) => number,
     layout: PokemonNavigationLayout, byteLength: number): PokemonRegionalGuidance | undefined {
+    return this.guidanceToAny(map, player, [goal], byte, layout, byteLength);
+  }
+
+  object(map: number, index: number, byte: (offset: number) => number, layout: PokemonNavigationLayout, byteLength: number) {
+    return this.headers.maps(byte, layout.collisionBank === 1, byteLength).get(map)?.objects[index - 1];
+  }
+
+  guidanceToAny(map: number, player: Point, goals: readonly number[], byte: (offset: number) => number,
+    layout: PokemonNavigationLayout, byteLength: number): PokemonRegionalGuidance | undefined {
+    if (goals.length < 1 || goals.length > 4) return undefined;
     if (!this.maps) this.build(byte, layout, byteLength);
-    if (!this.maps!.has(map) || !this.maps!.has(goal)) return undefined;
+    const known = [...new Set(goals.filter(goal => this.maps!.has(goal)))].sort((a, b) => a - b);
+    if (!this.maps!.has(map) || !known.length) return undefined;
+    const goal = known.join(",");
     if (goal !== this.goal) {
-      this.goal = goal; this.distances.clear();
-      const queue = [...new Set(this.maps!.get(goal)!.labels)].filter(node => node >= 0);
+      this.goal = goal; this.distances = new Map();
+      const queue = [...new Set(known.flatMap(goal => [...this.maps!.get(goal)!.labels]))].filter(node => node >= 0);
       for (const node of queue) this.distances.set(node, 0);
       for (let head = 0; head < queue.length; head++) {
         const node = queue[head]!;
@@ -52,8 +64,9 @@ export class PokemonRegionGraph {
         }
       }
     }
+    const distances = this.distances;
     const node = this.at(map, player);
-    return { here: node === undefined ? undefined : this.distances.get(node), exitDistance: exit => {
+    return { here: node === undefined ? undefined : distances.get(node), exitDistance: exit => {
       const current = this.maps!.get(map)!;
       let landing: number | undefined;
       if (exit.warp !== undefined) {
@@ -71,7 +84,7 @@ export class PokemonRegionGraph {
           y: exit.direction < 2 ? connection.yAlign : exit.y + connection.yAlign,
         });
       }
-      return landing === undefined ? undefined : this.distances.get(landing);
+      return landing === undefined ? undefined : distances.get(landing);
     } };
   }
 

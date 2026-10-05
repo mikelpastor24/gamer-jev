@@ -8,6 +8,7 @@ export interface PokemonMapData {
   readonly id: number; readonly bank: number; readonly tileset: number;
   readonly width: number; readonly height: number; readonly blocks: number;
   readonly warps: readonly PokemonMapWarp[]; readonly connections: readonly PokemonMapConnection[];
+  readonly objects: readonly { readonly picture: number; readonly item?: number }[];
 }
 
 /** Bounded cartridge header metadata; coarse distances alone do not prove regional reachability. */
@@ -44,7 +45,8 @@ export class PokemonMapGraph {
           const objects = word(end);
           if (objects < 0x4000 || objects >= 0x8000) continue;
           const start = address(bank, objects), count = byte(start + 1);
-          if (count > 32) continue;
+          const bankEnd = (bank + 1) * 0x4000;
+          if (count > 32 || start + 2 + count * 4 >= bankEnd) continue;
           const warps: PokemonMapWarp[] = [];
           for (let warp = 0; warp < count; warp++) {
             const entry = start + 2 + warp * 4, destination = byte(entry + 3);
@@ -52,9 +54,22 @@ export class PokemonMapGraph {
             if (destination === 255) returns.add(id);
             else if (destination < 248) destinations.add(destination);
           }
+          const sprites: { picture: number; item?: number }[] = [];
+          // Cartridge flags distinguish actual pickups from starter balls, trainers and other sprites.
+          let cursor = start + 2 + count * 4;
+          const signs = byte(cursor++);
+          if (signs <= 16 && cursor + signs * 3 < bankEnd) {
+            cursor += signs * 3;
+            const spriteCount = byte(cursor++);
+            if (spriteCount <= 15 && cursor + spriteCount * 8 <= bankEnd) for (let sprite = 0; sprite < spriteCount; sprite++) {
+              const flags = byte(cursor + 5);
+              sprites.push({ picture: byte(cursor), ...(flags & 0x80 && !(flags & 0x40) ? { item: byte(cursor + 6) } : {}) });
+              cursor += flags & 0x40 ? 8 : flags & 0x80 ? 7 : 6;
+            }
+          }
           edges.set(id, destinations);
           this.metadata.set(id, { id, bank, tileset: byte(header), width: width * 2, height: height * 2,
-            blocks: word(header + 3), connections, warps });
+            blocks: word(header + 3), connections, warps, objects: sprites });
         }
         // LAST_MAP indoors returns to an outdoor parent; never fabricate a return for a sealed door.
         for (const [parent, destinations] of edges) if (parent < 37) for (const destination of destinations) {

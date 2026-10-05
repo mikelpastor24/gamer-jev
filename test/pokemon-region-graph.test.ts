@@ -68,3 +68,16 @@ test("regional hints reject unknown and unterminated tables without unbounded re
   assert.equal(graph.guidance(250, { x: 0, y: 0 }, 2, byte, layout, bytes.length), undefined);
   assert.equal(graph.guidance(50, { x: -1, y: 0 }, 2, byte, layout, bytes.length)!.here, undefined);
 });
+
+test("service guidance keeps earlier exit distances stable and rejects unbounded goal lists", () => {
+  const { graph, byte, bytes, layout } = cartridge(false, forestJourney);
+  const story = graph.guidance(50, { x: 4, y: 5 }, 2, byte, layout, bytes.length)!;
+  const exit = { x: 3, y: 0, destination: 51, warp: 1 };
+  const before = story.exitDistance(exit);
+  const supplies = graph.guidanceToAny(50, { x: 4, y: 5 }, [13, 200], byte, layout, bytes.length)!;
+  assert.equal(supplies.here, 1);
+  assert.equal(story.exitDistance(exit), before);
+  assert.notEqual(supplies.exitDistance(exit), before);
+  assert.equal(graph.guidanceToAny(50, { x: 4, y: 5 }, [], byte, layout, bytes.length), undefined);
+  assert.equal(graph.guidanceToAny(50, { x: 4, y: 5 }, [0, 1, 2, 3, 4], byte, layout, bytes.length), undefined);
+});
