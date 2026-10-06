@@ -52,6 +52,8 @@ export interface ModelUsage { readonly inputTokens: number; readonly outputToken
 export type StateValue = string | number | boolean;
 /** Profile-owned evidence about the current choices; never executable instructions. */
 export interface GameDecisionSupport {
+  /** Immediate profile-owned task for the current choice; supplied objectives remain authoritative. */
+  readonly decisionGoal?: string;
   readonly facts: readonly string[];
   readonly actionFacts: Readonly<Record<string, readonly string[]>>;
 }
@@ -75,6 +77,7 @@ export interface GameStateProvider {
   setObjectives?(objectives: Objectives): void;
   createExecution?(action: AgentAction): GameActionExecution;
   shouldWait?(frame: Frame): boolean;
+  onActionComplete?(event: CompletedGameAction): void;
 }
 export interface VisualObservation { readonly text: string; readonly model: string; readonly usage: ModelUsage }
 export interface Observation extends VisualObservation {
@@ -96,6 +99,13 @@ export interface ActionRecord {
   readonly interrupted: boolean;
   readonly result?: ActionResult;
   readonly executionReason?: string;
+}
+/** Actual completed execution evidence, for optional profile-owned decision memory. */
+export interface CompletedGameAction {
+  readonly action: AgentAction;
+  readonly record: ActionRecord;
+  readonly before?: GameState;
+  readonly after?: GameState;
 }
 /** Changes observed at action completion are evidence, not proof of causation or goal progress. */
 export interface ActionResult {
@@ -139,6 +149,7 @@ export interface ObservationProvider {
   createExecution?(action: AgentAction): GameActionExecution;
   /** A bounded local settle, without requesting perception or a gameplay decision. */
   shouldWait?(frame: Frame): boolean;
+  onActionComplete?(event: CompletedGameAction): void;
 }
 /** Visual perception cannot supply controller actions or overwrite memory-derived state. */
 export interface VisionProvider {

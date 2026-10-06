@@ -1,4 +1,4 @@
-import type { AgentAction, GameState, Objectives, StateValue } from "../../core/agent.js";
+import type { AgentAction, CompletedGameAction, GameState, Objectives, StateValue } from "../../core/agent.js";
 import type { GameReaderMemory, GameStateData } from "../../core/game-reader.js";
 import type { PokemonNavigationLayout } from "./navigation-layout.js";
 import { PokemonInteractionMemory } from "./interaction-memory.js";
@@ -8,6 +8,9 @@ import { PokemonRouteFeedback, type PokemonRoute, type PokemonRouteOutcome } fro
 import { pokemonLocation as location } from "./locations.js";
 import { PokemonTravelMemory } from "./travel-memory.js";
 import type { PokemonItemCatalog } from "./item-catalog.js";
+import type { PokemonPreparationSupport } from "./preparation-support.js";
+import { landEncounterTile } from "./encounter-tiles.js";
+import { PokemonFocusMemory, type PokemonFocus } from "./focus.js";
 
 const directions = [
   { name: "up", button: "UP", dx: 0, dy: -1, facing: 4, connection: 8 },
@@ -23,6 +26,10 @@ interface Target extends Point {
   readonly destination?: number; readonly triggers?: readonly Direction[]; readonly squares?: readonly Point[];
   readonly boundary?: Direction;
   readonly pickup?: string;
+  readonly arrivalOnly?: boolean;
+  readonly trainer?: string;
+  readonly canCollect?: boolean;
+  readonly stepOffWarp?: boolean;
 }
 const key = ({ x, y }: Point) => `${x},${y}`;
 const actionId = (direction: Direction) => `press_${direction.name}`;
@@ -37,10 +44,15 @@ export class GenerationOneDecisionSupport {
   private readonly routes = new Map<string, PokemonRoute>();
   private readonly attempts = new PokemonRouteFeedback();
   private readonly travel = new PokemonTravelMemory();
+  private readonly focus = new PokemonFocusMemory();
+  private planningActive = false;
+  private focusOptions: readonly PokemonFocus[] = [];
   private progressSignature = "";
   private contextKey = "";
+  private healingReview = 0;
+  private importantFacts: string[] = [];
   private readonly layout: PokemonNavigationLayout | undefined;
-  constructor(layout?: PokemonNavigationLayout) {
+  constructor(layout?: PokemonNavigationLayout, private readonly preparation?: PokemonPreparationSupport) {
     this.layout = layout ? { ...layout } : undefined;
     this.story = new PokemonStoryProgress(layout?.collisionBank === 1);
     if (layout) for (const [name, address] of Object.entries(layout)) {
@@ -52,25 +64,46 @@ export class GenerationOneDecisionSupport {
   }
   reset(): void {
     this.banks.clear(); this.interactions.reset(); this.story.reset(); this.graph.reset(); this.routes.clear(); this.attempts.reset(); this.travel.reset();
-    this.contextKey = ""; this.progressSignature = "";
+    this.contextKey = ""; this.progressSignature = ""; this.focus.reset(); this.preparation?.reset(); this.planningActive = false; this.focusOptions = [];
+    this.healingReview = 0; this.importantFacts = [];
   }
-  setObjectives(objectives: Objectives): void { this.story.setObjectives(objectives); this.attempts.reset(); this.travel.reset(); }
+  setObjectives(objectives: Objectives): void { this.story.setObjectives(objectives); this.attempts.reset(); this.travel.reset(); this.focus.reset(); }
+  onActionComplete(event: CompletedGameAction): void { if (this.planningActive) this.focus.complete(event); }
+  needsFocus(state: GameState): boolean { return this.planningActive && this.focus.needsChoice && state.values.phase === "overworld" && state.values.navigationStatus === "ready" && this.focusOptions.length > 0; }
+  focusActions(state: GameState): readonly AgentAction[] {
+    if (!this.planningActive || state.values.phase !== "overworld" || state.values.navigationStatus !== "ready") return [];
+    if (this.focus.needsChoice) return this.focus.choices(state.values, this.focusOptions, focus => this.preparation?.note(focus) ?? "");
+    const healing = this.preparation?.needsHealing && this.focus.current !== "heal" && this.focusOptions.includes("heal") ?
+      this.focus.choices(state.values, ["heal"], focus => this.preparation!.note(focus)) : [];
+    return [...healing, { id: "reconsider_focus", description: "Reconsider the current persistent purpose using a fresh Jev choice. Use when its evidence or usefulness is uncertain; no controller input or alternative destination is executed.",
+      buttons: [], frames: 1, stop: false, execution: "profile", availabilityKey: `review:${this.focus.version}` }];
+  }
+  focusExecution(id: string) { return id === "reconsider_focus" ? this.focus.review() : this.focus.select(id); }
+  focusKey(): string { return this.planningActive ? `focus:${this.focus.current ?? "choose"}:${this.focus.version}` : ""; }
   route(id: string): PokemonRoute | undefined { return this.routes.get(id); }
+  nearbyPickups(): readonly string[] { return [...this.routes.values()].filter(route => route.nearbyPickup).map(route => route.id).slice(0, 15); }
   remember(target: PokemonRoute, outcome: PokemonRouteOutcome): void { this.attempts.remember(target, outcome); }
+  priorityActions(state: GameState): readonly AgentAction[] { return this.actions(state).filter(action => {
+    const route = this.routes.get(action.id); return route?.nearbyPickup || route?.stepOffWarp;
+  }).slice(0, 8); }
   actions(state: GameState): readonly AgentAction[] {
     if (state.values.phase !== "overworld" || state.values.movementInProgress) return [];
+    const pickupKey = this.nearbyPickups().reduce((mask, id) => mask | 1 << (Number(id.slice("interact_object_".length)) - 1), 0).toString(16);
     return [...this.routes.values()].map(route => ({ id: route.id, description: [
       `${route.label.startsWith("Item ball:") ? "Approach and pick up" : route.interact ? "Approach and interact with" : "Walk to"} ${route.label}. ${route.length} local step(s).`,
       route.navigationFact ?? (route.towardObjective ? "A known interaction relates to the active supplied milestone." : "Choose only if useful for the user's goal or constraints."),
+      this.focus.attemptFact(Number(state.values.mapId), route.id) ?? "",
       ...(route.destination === undefined ? [] : this.travel.routeFacts(Number(state.values.mapId), route.destination)),
       this.attempts.attempts(route) ? `Already attempted ${this.attempts.attempts(route)} time(s) without a new shortest distance or map change. Repeating the same partial approach is not new progress.` : "",
       "Execute this destination for at most 600 frames; stop for dialogue, battle, changed maps, or a blocked route.",
     ].filter(Boolean).join(" ").slice(0, 500), buttons: [], frames: 600, stop: false, execution: "profile" as const,
-      availabilityKey: `${route.context}:${route.id}` }));
+      availabilityKey: `${route.context}:${route.id}:loot${pickupKey}` }));
   }
 
-  read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, inventory: readonly number[] = [], items?: PokemonItemCatalog): GameStateData {
+  read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, inventory: readonly number[] = [], items?: PokemonItemCatalog, captureAvailable = false): GameStateData {
     this.routes.clear();
+    this.importantFacts = state.phase === "overworld" ? ["Priority: follow supplied objectives and constraints. After battles, heal members at 50% HP or less before continuing. Urgent healing comes first. Collect nearby verified item balls before routine travel. Attempt every eligible wild species absent from the current team, regardless of Pokedex ownership or new types; buy missing balls first. Jev must select each action."] : [];
+    let decisionGoal: string | undefined;
     const facts: string[] = [];
     const actionFacts: Record<string, string[]> = {};
     const values: Record<string, StateValue> = {};
@@ -82,6 +115,19 @@ export class GenerationOneDecisionSupport {
       controlBusy: (ram[this.layout.joyIgnore - 0xc000]! & 0xf0) === 0xf0,
     } : {}) };
     const progress = this.story.read(flags, settledState, inventory);
+    this.planningActive = Boolean(this.layout && state.gameStarted === true && Number(state.partyCount) > 0 && progress?.values.pokedexReceived === true);
+    const preparation = this.preparation?.read(memory, ram, { ...settledState, ...progress?.values }, items, captureAvailable);
+    if (preparation) { Object.assign(values, preparation.values); Object.assign(descriptions, preparation.descriptions); state = { ...state, ...preparation.values }; }
+    if (this.planningActive) this.focus.observe({ ...settledState, ...preparation?.values, ...(this.preparation ? { preparationHealthKey: this.preparation.healthKey, partyRestored: this.preparation.restored ?? false } : {}) }, String(progress?.values.completedStoryChecks ?? "custom"));
+    if (this.preparation && this.preparation.postBattleReview > this.healingReview) {
+      this.healingReview = this.preparation.postBattleReview;
+      if (this.planningActive && this.focus.current !== "heal") this.focus.requireReview("A battle ended with 50% HP or less, status or low attack PP. Prioritize a healing purpose before further travel; opening START is not healing.");
+    }
+    if (this.planningActive && ["text", "menu"].includes(String(state.phase))) {
+      if (state.menuKind === "overworld") decisionGoal = `Close START with B or START to continue the selected ${this.focus.current ?? "gameplay"} task. This menu does not heal, buy balls or pick up nearby objects. Supplied constraints remain authoritative.`;
+      else if (this.focus.current === "shop" || this.focus.current === "catch" && this.preparation?.needsBalls) decisionGoal = "Continue the selected supply task through this dialogue/menu. Obtain missing capture balls from the clerk when affordable and storable. Select item, quantity and total-price confirmation separately; inspect the current prompt instead of abandoning the purchase for routine story travel.";
+      else if (this.focus.current === "heal") decisionGoal = "Continue the selected healing task while resolving the current dialogue/menu. This may be a trainer or another interruption; do not assume it is the nurse. A known Center nurse heals for free. Jev chooses each answer; verify restored HP, status and PP before resuming travel.";
+    }
     if (progress) {
       Object.assign(values, progress.values);
       for (const name of Object.keys(progress.values)) descriptions[name] = name === "completedStoryChecks" ?
@@ -97,11 +143,16 @@ export class GenerationOneDecisionSupport {
     if (currentMap !== undefined) facts.push(...this.travel.facts(currentMap));
     const finish = (): GameStateData => {
       const support = interaction.decisionSupport!;
+      for (const [id, evidence] of Object.entries(preparation?.decisionSupport?.actionFacts ?? {})) actionFacts[id] = [...evidence, ...(actionFacts[id] ?? [])].slice(0, 8);
       for (const [id, evidence] of Object.entries(support.actionFacts)) actionFacts[id] = [...evidence, ...(actionFacts[id] ?? [])].slice(0, 8);
       return { values: { ...values, ...interaction.values }, descriptions: { ...descriptions, ...interaction.descriptions },
-        decisionSupport: { facts: [...support.facts, ...facts].slice(0, 32), actionFacts } };
+        decisionSupport: { facts: [...this.importantFacts.slice(0, 8), ...(preparation?.decisionSupport?.facts ?? []), ...(this.planningActive ? this.focus.facts() : []), ...support.facts, ...facts].slice(0, 32), actionFacts, ...(decisionGoal ? { decisionGoal } : {}) } };
     };
     const add = (name: string, value: StateValue, description: string) => { values[name] = value; descriptions[name] = description; };
+    if (this.planningActive && state.phase === "overworld") {
+      add("currentFocus", this.focus.current ?? "choose", "Persistent purpose selected by Jev. Map changes and incidental battles do not choose a new purpose.");
+      add("focusStatus", this.focus.needsChoice ? "choose" : "active", "A fresh purpose choice is required after changed evidence, six actions without a new best route distance, or 32 actions. Reads alone never consume this review interval.");
+    }
     if (state.phase === "transition") facts.push("Input is blocked or the display is changing. Wait for a stable screen before selecting another gameplay input.");
     if (state.phase === "text") facts.push("A text box is visible. A advances dialogue; walking controls do not move through the box. Text can still be printing.");
     if (state.phase === "naming") facts.push("This is a naming grid. A enters the highlighted character, B deletes, SELECT changes case, START finishes a nonempty entry. Follow the user's naming constraints.");
@@ -167,13 +218,13 @@ export class GenerationOneDecisionSupport {
       return finish();
     }
     const tileset = u8(layout.tileset);
-    const tile = (x: number, y: number): number => {
+    const tile = (x: number, y: number, right = false): number => {
       // The six-block padding includes the border and connected-map strips.
       const bx = Math.floor(x / 2) + 3; const by = Math.floor(y / 2) + 3;
       if (bx < 0 || by < 0 || bx >= width / 2 + 6 || by >= height / 2 + 6) return -1;
       const block = u8(0xc6e8 + by * (width / 2 + 6) + bx);
       const quadrant = ((y & 1) * 2 + 1) * 4 + (x & 1) * 2;
-      return romByte(flat(blockPointer) + block * 16 + quadrant);
+      return romByte(flat(blockPointer) + block * 16 + quadrant + Number(right));
     };
     const inside = (point: Point) => point.x >= 0 && point.y >= 0 && point.x < width && point.y < height;
     const pairs: number[][] = [];
@@ -205,8 +256,10 @@ export class GenerationOneDecisionSupport {
       const metadata = this.graph.object(Number(state.mapId), index, romByte, layout, memory.romByteLength ?? 0);
       const item = metadata?.picture === picture ? metadata.item : undefined;
       const pickup = item && item < 255 ? `${items?.name(item) ?? `itemId=${item}`}. ${state.bagCount === 20 && !inventory.includes(item) ? "No free bag slot for this item type; make space before collecting." : "A attempts collection; only a subsequent inventory/object change confirms the result."}` : undefined;
-      if (inside(point)) objects.push({ ...point, id: `interact_object_${index}`, label: pickup ? `Item ball: ${items?.name(item!) ?? `itemId=${item}`} (object ${index})` : `${names[picture] ?? "Object"} ${index}`,
-        interact: true, boulder, ...(pickup ? { pickup } : {}) });
+      const capacity = pickup ? this.preparation?.canCollect(ram, item!) : undefined;
+      const trainer = metadata?.picture === picture ? metadata.trainer : undefined;
+      if (inside(point)) objects.push({ ...point, id: `interact_object_${index}`, label: pickup ? `Item ball: ${items?.name(item!) ?? `itemId=${item}`} (object ${index})` : trainer ? `Trainer ${trainer} (object ${index})` : `${names[picture] ?? "Object"} ${index}`,
+        interact: true, boulder, ...(pickup ? { pickup, ...(capacity === undefined ? {} : { canCollect: capacity }) } : {}), ...(trainer ? { trainer } : {}) });
     }
     const occupied = new Set(objects.map(key));
     const warps: Target[] = [];
@@ -245,6 +298,7 @@ export class GenerationOneDecisionSupport {
       warpTargets.push({ ...warp, squares: group, triggers: directions.filter(direction => group.some(entry => entry.triggers?.includes(direction))) });
     }
     const standingWarp = warps.find(warp => key(warp) === key(player));
+    const standingAutomaticWarp = Boolean(standingWarp && warpTilesReady && automaticWarpTiles.has(tile(player.x, player.y)));
     const standingGroup = warpTargets.find(warp => warp.squares?.some(point => key(point) === key(player)));
     if (standingWarp) {
       add("standingExit", standingWarp.label, "Live warp entry under the player. Reaching its coordinates alone does not prove a map transition.");
@@ -334,6 +388,26 @@ export class GenerationOneDecisionSupport {
       }).filter(inside);
     };
     const targets = [...warpTargets, ...objects, ...signs.slice(0, 4)];
+    if (standingAutomaticWarp) {
+      const away = directions.flatMap(direction => {
+        const result = step(player, direction);
+        return result.allowed && inside(result.point) && !warpKeys.has(key(result.point)) ? [{ ...result.point, id: `step_off_exit_${direction.name}`,
+          label: `Step off the current automatic stair ${direction.name}; then select ${standingWarp!.id} again to re-enter that same exit`,
+          interact: false, arrivalOnly: true, stepOffWarp: true }] : [];
+      });
+      targets.push(...away);
+      this.importantFacts.push(`Priority: already standing on ${standingWarp!.label}, an automatic stair landing. Waiting, START or choosing the same zero-distance exit does not re-enter it. To return through this stair, Jev must first choose one available step_off_exit action, then choose ${standingWarp!.id} from the next position. No step or return is chosen automatically.`);
+    }
+    const grassTargets: Target[] = [];
+    const landEncounters = this.preparation?.catalog.landEncounters(Number(state.mapId));
+    for (let y = 0; y < height && grassTargets.length < 4; y++) for (let x = 0; x < width && grassTargets.length < 4; x++) {
+      if ((x !== player.x || y !== player.y) && (landEncounters !== undefined ? landEncounters.length > 0 &&
+        landEncounterTile(Number(state.mapId), tileset, u8(layout.grass), tile(x, y), tile(x, y, true), layout.collisionBank === 1) :
+        u8(layout.grass) !== 255 && tile(x, y) === u8(layout.grass)) && distance[y * width + x]! > 0 && !warpKeys.has(`${x},${y}`)) {
+        grassTargets.push({ x, y, id: `walk_grass_${x}_${y}`, label: `${tile(x, y) === u8(layout.grass) ? "Tall grass" : "Land encounter square"} at (${x},${y})`, interact: false, arrivalOnly: true });
+      }
+    }
+    if (this.focus.current === "train" || this.focus.current === "catch") targets.push(...grassTargets);
     for (const direction of directions) if (connectionMask & direction.connection) {
       const candidates: Point[] = [];
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -346,16 +420,36 @@ export class GenerationOneDecisionSupport {
         label: `${direction.name} boundary to ${location(u8(layout.connections + 1 + directions.indexOf(direction) * 11))}`, interact: false });
     }
     const earlyGame = [0, 1, 2, 12, 13, 33, 37, 38, 39, 40, 41, 42, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58].includes(Number(state.mapId));
-    const supplies = earlyGame && state.pokeBalls === 0 && Number(state.partyCount) > 0 ? this.graph.guidanceToAny(Number(state.mapId), player, [42, 56], romByte, layout, memory.romByteLength ?? 0) : undefined;
+    const supplies = !this.planningActive && earlyGame && state.pokeBalls === 0 && Number(state.partyCount) > 0 ? this.graph.guidanceToAny(Number(state.mapId), player, [42, 56], romByte, layout, memory.romByteLength ?? 0) : undefined;
     if (supplies?.here !== undefined) facts.push(`Capture supplies are empty. Viridian/Pewter Mart is ${supplies.here} static walking-area transition(s) away; supplies require money, bag space and completed shop prerequisites. Supply detours are optional Jev choices, separate from the story milestone.`);
-    const regional = progress?.objective ? this.graph.guidance(Number(state.mapId), player, progress.objective.map,
+    const regional = progress?.objective && (!this.planningActive || !this.focus.current || this.focus.current === "progress" || this.focus.current === "explore") ? this.graph.guidance(Number(state.mapId), player, progress.objective.map,
       romByte, layout, memory.romByteLength ?? 0) : undefined;
+    const captureSupplies = this.focus.current === "catch" && this.preparation?.needsBalls === true;
+    const shopping = this.planningActive && (!this.focus.current || this.focus.current === "shop" || captureSupplies) ? this.graph.serviceGuidance("shop", Number(state.mapId), player, romByte, layout, memory.romByteLength ?? 0) : undefined;
+    const healing = this.planningActive && (!this.focus.current || this.focus.current === "heal" || this.preparation?.needsHealing) ? this.graph.serviceGuidance("heal", Number(state.mapId), player, romByte, layout, memory.romByteLength ?? 0) : undefined;
+    const encounterMaps = this.preparation?.encounterMaps(this.focus.current !== "train") ?? [];
+    const encounters = this.planningActive && (!this.focus.current || this.focus.current === "train" || this.focus.current === "catch" && !captureSupplies) && encounterMaps.length ?
+      this.graph.encounterGuidance(Number(state.mapId), player, encounterMaps, romByte, layout, memory.romByteLength ?? 0) : undefined;
+    const knownEncounters = grassTargets.length > 0 || encounters?.here !== undefined;
+    if (this.focus.needsChoice) this.focusOptions = ["progress", "explore", ...(shopping?.here !== undefined && Number(state.money) > 0 && Number(state.bagCount) < 20 ? ["shop" as const] : []),
+      ...(healing?.here !== undefined && this.preparation?.restored !== true ? ["heal" as const] : []), ...(knownEncounters ? ["train" as const] : []),
+      ...(knownEncounters && (this.preparation ? this.preparation.canStoreCapture && (Number(state.pokeBalls) > 0 || shopping?.here !== undefined && this.preparation.canBuyBalls) : Number(state.pokeBalls) > 0) ? ["catch" as const] : [])];
+    else this.focusOptions = healing?.here !== undefined && this.preparation?.restored !== true ? ["heal"] : [];
+    this.focusOptions = [...this.focusOptions].sort((a, b) => {
+      const rank = (focus: PokemonFocus) => this.preparation?.needsHealing && focus === "heal" ? 0 : focus === "catch" ? 1 : focus === "shop" ? 2 : 3;
+      return rank(a) - rank(b);
+    });
+    const focusGuidance = this.focus.current === "shop" || captureSupplies ? shopping : this.focus.current === "heal" ? healing : this.focus.current === "progress" ? regional :
+      this.focus.current === "train" || this.focus.current === "catch" ? encounters : undefined;
+    if (captureSupplies) facts.unshift("Jev's capture purpose currently needs balls. Reach a Mart, interact with the clerk, choose a ball and confirm an affordable quantity/price separately. Buying supplies preserves this capture purpose; it does not capture a Pokemon.");
+    else if (this.focus.current === "train" || this.focus.current === "catch") facts.unshift(`${this.preparation?.destinationFact(encounters?.candidateMaps ?? []) ?? "Seek reachable encounter tiles."} ${encounters?.here === undefined ? "A regional route is unknown; local controller attempts remain available." : `Encounter walking areas are ${encounters.here} static area transition(s) away.`} Arrival alone does not train or capture; continue choosing useful encounter squares and battle actions.`.slice(0, 500));
     if (progress?.objective) facts.push(`Navigation uses separate walking areas and exact warp landing coordinates, not just map IDs. ${regional?.here === undefined ? "The static regional route to the active milestone is unknown." : `The current walking area is ${regional.here} static area transition(s) from the milestone's map.`} Trees, water, scripts, moving objects and other special mechanics can change access; this is not verified story progress.`);
-    this.contextKey = `${state.mapId}:${progress?.objective?.id ?? "custom"}:${progress?.objective?.map ?? "unknown"}`;
-    const candidateRoutes: PokemonRoute[] = [];
+    this.contextKey = `${state.mapId}:${progress?.objective?.id ?? "custom"}:${progress?.objective?.map ?? "unknown"}${this.planningActive ? `:${this.focus.current ?? "choose"}:${this.focus.version}` : ""}`;
+    const candidateRoutes: (PokemonRoute & { readonly focusMatch: boolean })[] = [];
     const routeFacts = targets.map(target => {
       const goals = goalsFor(target).filter(point => distance[indexOf(point)]! >= 0);
       const length = goals.length ? Math.min(...goals.map(point => distance[indexOf(point)]!)) : null;
+      const nearbyPickup = Boolean(target.pickup && target.canCollect && length !== null && length <= 8);
       const best = length === null ? [] : goals.filter(point => distance[indexOf(point)] === length);
       const mask = best.reduce((bits, point) => bits | first[indexOf(point)]!, 0);
       const next = length === 0 ? target.boundary ? [target.boundary] : target.squares && standingWarp ? [...standingWarp.triggers!] : [] : directions.filter((_direction, index) => mask & 1 << index);
@@ -384,31 +478,70 @@ export class GenerationOneDecisionSupport {
             navigationFact = "Leads toward the active supplied milestone: trying to leave Oak's laboratory after receiving a starter triggers the rival battle.";
           }
         } else if (state.mapId === objective.map && target.interact) {
-          towardObjective = objective.id === "starter" ? layout.collisionBank === 1 ? target.label.startsWith("Professor Oak") : target.label.startsWith("Poke Ball") : target.label.startsWith("Professor Oak") || target.label.startsWith("Shop clerk");
+          const plain = (text: string) => text.toUpperCase().replace(/[^A-Z]/g, "");
+          towardObjective = objective.id === "starter" ? layout.collisionBank === 1 ? target.label.startsWith("Professor Oak") : target.label.startsWith("Poke Ball") :
+            Boolean(target.trainer && plain(objective.goal).includes(plain(target.trainer))) || target.label.startsWith("Professor Oak") || target.label.startsWith("Shop clerk");
+          if (towardObjective) navigationFact = "This interaction relates to the active supplied milestone at its destination. Arriving at the map or standing on an exit does not finish the task. Jev chooses whether to interact and prepare for any resulting battle.";
         }
       }
       const supplyDistance = consistent(landingDistances(supplies));
       if (length !== null && supplies?.here !== undefined && supplyDistance !== undefined && supplyDistance < supplies.here) {
         navigationFact = `${navigationFact ?? ""} Leads closer to a Viridian/Pewter Mart for missing capture supplies (${supplyDistance} static area transition(s)). This does not select a detour or establish shop availability.`.trim().slice(0, 500);
       }
-      if (length !== null && target.id) {
+      let focusMatch = false;
+      if (this.planningActive && this.focus.current) {
+        const focus = this.focus.current;
+        const there = consistent(landingDistances(focusGuidance));
+        focusMatch = focus === "progress" ? towardObjective : focus === "shop" ? target.label.startsWith("Shop clerk") || there !== undefined && shopping?.here !== undefined && there < shopping.here :
+          focus === "heal" ? target.label.startsWith("Nurse") || there !== undefined && healing?.here !== undefined && there < healing.here :
+            focus === "catch" && captureSupplies ? target.label.startsWith("Shop clerk") || there !== undefined && shopping?.here !== undefined && there < shopping.here :
+            focus === "train" || focus === "catch" ? target.arrivalOnly === true || there !== undefined && encounters?.here !== undefined && there < encounters.here : !this.focus.attemptFact(Number(state.mapId), target.id ?? "");
+        if (target.stepOffWarp) {
+          const returnDistance = standingWarp?.destination === undefined ? undefined : focusGuidance?.exitDistance({
+            x: standingWarp.x, y: standingWarp.y, destination: standingWarp.destination, warp: Number(standingWarp.id!.slice(8)) - 1,
+          });
+          focusMatch = returnDistance !== undefined && focusGuidance?.here !== undefined && returnDistance < focusGuidance.here;
+        }
+        navigationFact = `${focusMatch ? "Matches" : "Does not establish progress for"} Jev's persistent ${focus} focus. ${target.destination !== undefined && focusGuidance?.here === 0 ? "Leaves the focus destination; arrival alone does not perform its task. " : ""}${navigationFact ?? ""}`.slice(0, 500);
+      }
+      if (nearbyPickup) {
+        navigationFact = `Priority: collect this nearby verified item (${length} walking step(s)) before routine onward travel; ${this.preparation?.needsHealing ? "healing has priority while HP/status/PP are unsafe. " : ""}This opportunity applies independently of the selected story purpose. ${target.pickup}`.slice(0, 500);
+        this.importantFacts.push(`Priority: nearby collectible ${target.label}, ${length} step(s). ${this.preparation?.needsHealing ? "Heal first; otherwise choose" : "Choose"} ${target.id} to attempt pickup before routine travel; only observed inventory/object changes confirm it.`);
+      } else if (target.stepOffWarp) navigationFact = `${focusMatch ? `Priority: Matches Jev's persistent ${this.focus.current} focus when returning through this stair.` : `Return option: re-entering this stair to ${location(standingWarp!.destination!)} does not establish a closer route to the selected purpose; compare other exits before returning.`} Walk off this landing only; Jev must then select ${standingWarp!.id} again if a return is desired. START and waiting cannot reactivate the stair.`;
+      else if (target.pickup) navigationFact = `${target.canCollect === false ? "No known bag capacity for this pickup; make space first." : target.canCollect === undefined ? "Verified loot opportunity; bag capacity is unknown." : "Verified loot opportunity; collect when nearby before routine travel."} ${target.pickup}`.slice(0, 500);
+      // A known automatic landing requires leaving and re-entering, each explicitly chosen by Jev.
+      const inactiveLanding = standingAutomaticWarp && length === 0 && target.destination !== undefined && !next.length;
+      if (length !== null && target.id && !inactiveLanding) {
         candidateRoutes.push({ id: target.id, context: this.contextKey, label: target.label, length, nextButtons: next.map(direction => direction.button),
-          interact: target.interact, x: target.x, y: target.y, towardObjective,
+          interact: target.interact, x: target.x, y: target.y, towardObjective, focusMatch,
           ...(navigationFact ? { navigationFact } : {}),
+          ...(target.arrivalOnly ? { arrivalOnly: true } : {}),
+          ...(nearbyPickup ? { nearbyPickup: true } : {}), ...(target.stepOffWarp ? { stepOffWarp: true } : {}),
           ...(target.destination !== undefined ? { destination: target.destination } : {}) });
       }
       const at = (target.squares ?? [target]).map(point => `(${point.x},${point.y})`).join("/").slice(0, 96);
-      const fact = length === null ? `${target.label} at ${at}: no route found with current walking rules and objects; special mechanics may be needed.` :
+      const fact = target.arrivalOnly ? `${target.label} at ${at}: ${length ?? "unknown"} local step(s) to an encounter square. Walking there is an attempt, not a guaranteed encounter or capture.` : length === null ? `${target.label} at ${at}: no route found with current walking rules and objects; special mechanics may be needed.` :
         `${target.label} at ${at}: ${length} local step(s) ${target.interact ? "to an interaction position" : "to the exit"}. ${length ? `Shortest first inputs: ${next.map(actionId).join(", ")}.` : target.interact ? "Face the target, then press A." : next.length ? `On the exit. Activate with ${next.map(actionId).join(" or ")}; sideways movement on equivalent mats is not a transition.` : "On the exit square; a directional trigger may be required."}`;
       const travelFacts = target.destination === undefined ? [] : this.travel.routeFacts(Number(state.mapId), target.destination);
-      return { fact: `${fact}${navigationFact ? ` ${navigationFact}` : towardObjective ? " Leads toward the active supplied milestone." : ""}${travelFacts.length ? ` ${travelFacts.join(" ")}` : ""}`.slice(0, 500),
+      return { fact: `${fact}${navigationFact ? ` ${navigationFact}` : towardObjective ? " Leads toward the active supplied milestone." : ""}${travelFacts.length ? ` ${travelFacts.join(" ")}` : ""}`.slice(0, 500), focusMatch,
         length, next, brief: `${target.label} ${at}: shortest route ${length} step(s)${travelFacts.length ? `; ${travelFacts.join(" ")}` : ""}`.slice(0, 500) };
     }).sort((a, b) => (a.length ?? Infinity) - (b.length ?? Infinity));
-    for (const route of candidateRoutes.sort((a, b) => Number(b.towardObjective) - Number(a.towardObjective) || a.length - b.length).slice(0, 20)) {
+    for (const route of candidateRoutes.sort((a, b) => Number(Boolean(b.nearbyPickup || b.stepOffWarp && b.focusMatch)) - Number(Boolean(a.nearbyPickup || a.stepOffWarp && a.focusMatch)) || Number(b.focusMatch) - Number(a.focusMatch) || Number(b.towardObjective) - Number(a.towardObjective) || a.length - b.length).slice(0, 20)) {
       this.routes.set(route.id, route);
       actionFacts[route.id] = [route.navigationFact ?? (route.towardObjective ? "A known interaction relates to the active supplied milestone." : "Reachable local destination; relevance depends on the user's goal and constraints."),
+        ...(this.focus.attemptFact(Number(state.mapId), route.id) ? [this.focus.attemptFact(Number(state.mapId), route.id)!] : []),
         ...(route.destination === undefined ? [] : this.travel.routeFacts(Number(state.mapId), route.destination))];
     }
+    const nearby = this.nearbyPickups();
+    decisionGoal = this.preparation?.needsHealing ? `Restore the injured party before routine onward travel or optional fights. ${this.planningActive ? "Choose focus_heal when a new purpose is needed, then an exit that leads closer to a Center and its nurse." : "Use available verified destinations or controller attempts to reach an accessible Center; do not assume an unavailable purpose action."} Opening START is not healing. Supplied constraints remain authoritative.` :
+      nearby.length ? `Collect nearby verified loot before routine travel: available pickup action(s) ${nearby.slice(0, 8).join(", ")}. These opportunities apply even with a story, shopping or capture purpose. Each pickup is an attempt until inventory or the live object changes.` :
+        this.planningActive && this.preparation?.needsBalls && this.preparation.canBuyBalls && this.preparation.canStoreCapture ? "Obtain capture balls before more wild encounters. Choose capture or shopping preparation, enter a reachable Mart, approach its clerk, then select balls, quantity and price confirmation separately. Routine story travel does not supply missing balls." :
+          this.focus.current ? `Continue Jev's selected ${this.focus.current} purpose with a matching reachable destination or interaction. Arrival alone does not perform the task. Reconsider only when current evidence requires it; preserve supplied constraints.` :
+            this.planningActive ? "Choose a useful purpose using current preparation needs and supplied objectives, then choose its destination separately." :
+              `Complete the current supplied milestone before assuming later capture/shopping prerequisites: ${progress?.objective?.goal ?? "use observed state and available choices to follow the user's objectives"}.`.slice(0, 500);
+    const locals = routeFacts.filter(route => route.focusMatch && route.length !== null).map(route => route.length!);
+    this.focus.distance(focusGuidance?.here ?? (this.focus.current === "train" || this.focus.current === "catch" ? grassTargets.length ? 0 : undefined : undefined), locals.length ? Math.min(...locals) : undefined);
+    if (this.planningActive && focusGuidance?.here === 0) facts.unshift("The current map contains the destination for the selected purpose. Entering it or activating its return exit does not perform the task; inspect relevant people/objects and observed outcomes before leaving, unless Jev deliberately changes purpose.");
     facts.push(...routeFacts.slice(0, 32 - facts.length).map(route => route.fact));
     for (const direction of directions) actionFacts[actionId(direction)]!.push(...routeFacts.filter(route => route.next.includes(direction)).slice(0, 6).map(route => `${route.brief}; ${direction.button} ${route.length === 0 ? "activates this exit" : "starts this route"}.`.slice(0, 500)));
     return finish();

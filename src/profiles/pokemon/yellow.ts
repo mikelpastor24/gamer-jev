@@ -4,6 +4,7 @@ import type { GenerationOneLayout } from "./generation-one.js";
 import { YELLOW_NAVIGATION } from "./navigation-layout.js";
 import { pokemonObjectives } from "./objectives.js";
 import { YELLOW_BATTLE } from "./battle-layout.js";
+import { YELLOW_PREPARATION } from "./preparation-layout.js";
 import { YELLOW_ITEMS } from "./item-layout.js";
 
 export const POKEMON_YELLOW_DESCRIPTOR: GameReaderDescriptor = {
@@ -26,5 +27,5 @@ export const POKEMON_YELLOW_LAYOUT: GenerationOneLayout = Object.freeze({
 });
 
 export function createPokemonYellowReader(): GenerationOnePokemonReader {
-  return new GenerationOnePokemonReader(POKEMON_YELLOW_DESCRIPTOR, POKEMON_YELLOW_LAYOUT, YELLOW_NAVIGATION, pokemonObjectives("pikachu"), YELLOW_BATTLE, YELLOW_ITEMS);
+  return new GenerationOnePokemonReader(POKEMON_YELLOW_DESCRIPTOR, POKEMON_YELLOW_LAYOUT, YELLOW_NAVIGATION, pokemonObjectives("pikachu"), YELLOW_BATTLE, YELLOW_ITEMS, YELLOW_PREPARATION);
 }

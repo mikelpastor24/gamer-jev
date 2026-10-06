@@ -34,6 +34,7 @@ export function bindGameReader(reader: GameReader, emulator: Emulator, actionFra
   },
   ...(reader.setObjectives ? { setObjectives: (value) => reader.setObjectives!(parseObjectives(value, true)) } : {}),
   ...(reader.createExecution ? { createExecution: (action) => reader.createExecution!(memory, structuredClone(action)) } : {}),
+  ...(reader.onActionComplete ? { onActionComplete: (event) => reader.onActionComplete!(structuredClone(event)) } : {}),
   ...(reader.shouldWait ? { shouldWait: (frame) => {
     if (frame.number !== emulator.frameNumber) throw new Error("Cannot check control for a stale emulator frame.");
     const busy = reader.shouldWait!(reader.readState(memory), frame.number);

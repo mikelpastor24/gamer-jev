@@ -3,7 +3,7 @@ import type { StateValue } from "../../core/agent.js";
 import { readTextScreen } from "./encoding.js";
 
 interface BattleFlow {
-  readonly menu: "text_acknowledgment" | "faint_pending" | undefined;
+  readonly menu: "text_acknowledgment" | "faint_pending" | "text_pending" | "actors_pending" | undefined;
   readonly context: string | undefined;
   readonly facts: readonly string[];
   readonly actionFacts: Readonly<Record<string, readonly string[]>>;
@@ -42,7 +42,11 @@ export class PokemonBattleFlow {
     // A missing/blinking arrow must not become an endless model-selected wait loop. The runner caps settling at 600 frames.
     const pending = (playerFainted || enemyFainted) && !choice && !acknowledged;
     if (pending) facts.push("Fainting or battle text may still be animating/printing. Settle locally with buttons released, up to the runner's frame ceiling. Without a verified continuation marker, input readiness remains unknown; waiting is not evidence of progress.");
-    return { menu: acknowledged ? "text_acknowledgment" : pending ? "faint_pending" : undefined,
+    const printing = dialogue && !acknowledged;
+    if (printing && !pending) facts.push("Battle dialogue is visible without a verified continuation marker or choice. Settle locally with buttons released for at most 600 frames; Jev is still required to acknowledge a completed prompt. If no marker arrives within the ceiling, preserve unknown controller attempts rather than waiting forever.");
+    const initializing = !choice && !acknowledged && [state.battlePlayer, state.battleEnemy].some(actor => String(actor).startsWith("unavailable"));
+    if (initializing && !printing && !pending) facts.push("Battle actor data are still initializing with no visible choice or completed continuation prompt. Settle locally for at most 600 neutral frames, then retain unknown controller attempts if readiness remains unverified. Do not choose a move or capture from stale actor data.");
+    return { menu: acknowledged ? "text_acknowledgment" : pending ? "faint_pending" : printing ? "text_pending" : initializing ? "actors_pending" : undefined,
       context: acknowledged ? key : undefined, facts, actionFacts };
   }
 }

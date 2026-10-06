@@ -1,3 +1,5 @@
+import { decodeName } from "./encoding.js";
+
 export interface PokemonMapWarp {
   readonly x: number; readonly y: number; readonly destination: number; readonly destinationWarp: number;
 }
@@ -8,7 +10,7 @@ export interface PokemonMapData {
   readonly id: number; readonly bank: number; readonly tileset: number;
   readonly width: number; readonly height: number; readonly blocks: number;
   readonly warps: readonly PokemonMapWarp[]; readonly connections: readonly PokemonMapConnection[];
-  readonly objects: readonly { readonly picture: number; readonly item?: number }[];
+  readonly objects: readonly { readonly picture: number; readonly item?: number; readonly trainer?: string }[];
 }
 
 /** Bounded cartridge header metadata; coarse distances alone do not prove regional reachability. */
@@ -27,6 +29,16 @@ export class PokemonMapGraph {
         const returns = new Set<number>();
         const word = (offset: number) => byte(offset) | byte(offset + 1) << 8;
         const address = (bank: number, pointer: number) => bank * 0x4000 + pointer - 0x4000;
+        const trainers = new Map<number, string>();
+        // Exact English revision symbols; retain only bounded decoded names, never cartridge assets.
+        let nameStart = 14 * 0x4000 + (yellow ? 0x197e : 0x19ff);
+        for (let id = 201; id <= 247; id++) {
+          if (nameStart + 25 >= byteLength) break;
+          const text: number[] = [];
+          for (let length = 0; length <= 24; length++) { const value = byte(nameStart++); text.push(value); if (value === 0x50) break; }
+          const name = decodeName(Uint8Array.from(text)); if (!name) break;
+          trainers.set(id, name);
+        }
         for (let id = 0; id < 248; id++) {
           const pointer = word(pointers + id * 2), bank = byte(banks + id);
           if (pointer < 0x4000 || pointer >= 0x8000 || bank < 1 || bank > 63) continue;
@@ -54,7 +66,7 @@ export class PokemonMapGraph {
             if (destination === 255) returns.add(id);
             else if (destination < 248) destinations.add(destination);
           }
-          const sprites: { picture: number; item?: number }[] = [];
+          const sprites: { picture: number; item?: number; trainer?: string }[] = [];
           // Cartridge flags distinguish actual pickups from starter balls, trainers and other sprites.
           let cursor = start + 2 + count * 4;
           const signs = byte(cursor++);
@@ -63,7 +75,8 @@ export class PokemonMapGraph {
             const spriteCount = byte(cursor++);
             if (spriteCount <= 15 && cursor + spriteCount * 8 <= bankEnd) for (let sprite = 0; sprite < spriteCount; sprite++) {
               const flags = byte(cursor + 5);
-              sprites.push({ picture: byte(cursor), ...(flags & 0x80 && !(flags & 0x40) ? { item: byte(cursor + 6) } : {}) });
+              const trainer = flags & 0x40 ? trainers.get(byte(cursor + 6)) : undefined;
+              sprites.push({ picture: byte(cursor), ...(flags & 0x80 && !(flags & 0x40) ? { item: byte(cursor + 6) } : {}), ...(trainer ? { trainer } : {}) });
               cursor += flags & 0x40 ? 8 : flags & 0x80 ? 7 : 6;
             }
           }

@@ -1,5 +1,7 @@
 import { PokemonMapGraph, type PokemonMapData, type PokemonMapWarp } from "./map-graph.js";
 import type { PokemonNavigationLayout } from "./navigation-layout.js";
+import { pokemonServiceMaps } from "./locations.js";
+import { landEncounterTile } from "./encounter-tiles.js";
 
 const directions = [
   { dx: 0, dy: -1, facing: 4 }, { dx: 0, dy: 1, facing: 0 },
@@ -10,6 +12,7 @@ interface RegionMap {
   readonly data: PokemonMapData;
   readonly labels: Int32Array;
   readonly warpNodes: ReadonlyMap<number, number>;
+  readonly encounterNodes: ReadonlySet<number>;
 }
 export interface PokemonRegionExit extends Point {
   readonly destination: number;
@@ -19,6 +22,7 @@ export interface PokemonRegionExit extends Point {
 }
 export interface PokemonRegionalGuidance {
   readonly here: number | undefined;
+  readonly candidateMaps: readonly number[];
   readonly exitDistance: (exit: PokemonRegionExit) => number | undefined;
 }
 
@@ -31,10 +35,16 @@ export class PokemonRegionGraph {
   private goal = "";
   private nodes = 0;
   private edges = 0;
+  private serviceRegion = "";
+  private readonly serviceCandidates = new Map<"shop" | "heal", readonly number[]>();
+  private encounterKey = "";
+  private encounterCandidates: readonly number[] = [];
 
   reset(): void {
     this.headers.reset(); this.maps = undefined; this.reverse.clear(); this.distances.clear();
     this.goal = ""; this.nodes = 0; this.edges = 0;
+    this.serviceRegion = ""; this.serviceCandidates.clear();
+    this.encounterKey = ""; this.encounterCandidates = [];
   }
 
   guidance(map: number, player: Point, goal: number, byte: (offset: number) => number,
@@ -45,17 +55,35 @@ export class PokemonRegionGraph {
   object(map: number, index: number, byte: (offset: number) => number, layout: PokemonNavigationLayout, byteLength: number) {
     return this.headers.maps(byte, layout.collisionBank === 1, byteLength).get(map)?.objects[index - 1];
   }
+  serviceGuidance(kind: "shop" | "heal", map: number, player: Point, byte: (offset: number) => number,
+    layout: PokemonNavigationLayout, byteLength: number): PokemonRegionalGuidance | undefined {
+    if (!this.maps) this.build(byte, layout, byteLength);
+    const region = `${map}:${this.at(map, player) ?? "unknown"}`;
+    if (region !== this.serviceRegion) { this.serviceRegion = region; this.serviceCandidates.clear(); }
+    if (!this.serviceCandidates.has(kind)) {
+      // Rank the bounded service catalog using exact walking areas, not coarse map hops through disconnected rooms.
+      const closest: { goal: number; distance: number }[] = [];
+      for (const goal of pokemonServiceMaps[kind]) {
+        const distance = this.guidanceToAny(map, player, [goal], byte, layout, byteLength)?.here;
+        if (distance === undefined) continue;
+        closest.push({ goal, distance }); closest.sort((a, b) => a.distance - b.distance || a.goal - b.goal);
+        if (closest.length > 4) closest.pop();
+      }
+      this.serviceCandidates.set(kind, closest.map(entry => entry.goal));
+    }
+    return this.guidanceToAny(map, player, this.serviceCandidates.get(kind)!, byte, layout, byteLength);
+  }
 
   guidanceToAny(map: number, player: Point, goals: readonly number[], byte: (offset: number) => number,
-    layout: PokemonNavigationLayout, byteLength: number): PokemonRegionalGuidance | undefined {
+    layout: PokemonNavigationLayout, byteLength: number, encounters = false): PokemonRegionalGuidance | undefined {
     if (goals.length < 1 || goals.length > 4) return undefined;
     if (!this.maps) this.build(byte, layout, byteLength);
     const known = [...new Set(goals.filter(goal => this.maps!.has(goal)))].sort((a, b) => a - b);
     if (!this.maps!.has(map) || !known.length) return undefined;
-    const goal = known.join(",");
+    const goal = `${encounters ? "encounters:" : ""}${known.join(",")}`;
     if (goal !== this.goal) {
       this.goal = goal; this.distances = new Map();
-      const queue = [...new Set(known.flatMap(goal => [...this.maps!.get(goal)!.labels]))].filter(node => node >= 0);
+      const queue = [...new Set(known.flatMap(goal => [...(encounters ? this.maps!.get(goal)!.encounterNodes : this.maps!.get(goal)!.labels)]))].filter(node => node >= 0);
       for (const node of queue) this.distances.set(node, 0);
       for (let head = 0; head < queue.length; head++) {
         const node = queue[head]!;
@@ -66,7 +94,7 @@ export class PokemonRegionGraph {
     }
     const distances = this.distances;
     const node = this.at(map, player);
-    return { here: node === undefined ? undefined : distances.get(node), exitDistance: exit => {
+    return { here: node === undefined ? undefined : distances.get(node), candidateMaps: known, exitDistance: exit => {
       const current = this.maps!.get(map)!;
       let landing: number | undefined;
       if (exit.warp !== undefined) {
@@ -86,6 +114,19 @@ export class PokemonRegionGraph {
       }
       return landing === undefined ? undefined : distances.get(landing);
     } };
+  }
+
+  encounterGuidance(map: number, player: Point, candidates: readonly number[], byte: (offset: number) => number,
+    layout: PokemonNavigationLayout, byteLength: number): PokemonRegionalGuidance | undefined {
+    if (candidates.length > 248) return undefined;
+    const key = `${map}:${candidates.join(",")}`;
+    if (key !== this.encounterKey) {
+      this.encounterKey = key;
+      this.encounterCandidates = [...new Set(candidates)].map(goal => ({ goal,
+        distance: this.headers.distance(map, goal, byte, layout.collisionBank === 1, byteLength) }))
+        .filter(entry => entry.distance !== undefined).sort((a, b) => a.distance! - b.distance!).slice(0, 4).map(entry => entry.goal);
+    }
+    return this.guidanceToAny(map, player, this.encounterCandidates, byte, layout, byteLength, true);
   }
 
   private at(map: number, { x, y }: Point): number | undefined {
@@ -138,7 +179,7 @@ export class PokemonRegionGraph {
       for (const data of metadata.values()) {
         const count = data.width * data.height;
         if (count > 16_384 || cells + count > 262_144 || data.blocks < 0x4000 || data.blocks >= 0x8000) continue;
-        let passable: Set<number>, tiles: Uint8Array;
+        let passable: Set<number>, tiles: Uint8Array, encounterTiles: Uint8Array;
         try {
           const header = layout.tilesets + data.tileset * 12;
           const bank = byte(header), blocks = word(header + 1), collision = word(header + 5);
@@ -146,18 +187,20 @@ export class PokemonRegionGraph {
           passable = new Set(terminated(address(layout.collisionBank, collision), 1, 256).map(entry => entry[0]!));
           if (!passable.size) continue;
           tiles = new Uint8Array(count);
+          encounterTiles = new Uint8Array(count);
           for (let y = 0; y < data.height; y++) for (let x = 0; x < data.width; x++) {
             const block = byte(address(data.bank, data.blocks) + (y >> 1) * (data.width >> 1) + (x >> 1));
             const tileOffset = blocks + block * 16 + ((y & 1) * 2 + 1) * 4 + (x & 1) * 2;
             if (tileOffset >= 0x8000) throw new Error("Regional block outside tileset bank.");
             tiles[y * data.width + x] = byte(address(bank, tileOffset));
+            encounterTiles[y * data.width + x] = byte(address(bank, tileOffset + 1));
           }
         } catch {
           // A single absent/corrupt map remains unknown, never a fabricated traversable region.
           continue;
         }
         cells += count;
-        this.label(data, tiles, passable, pairs, ledges);
+        this.label(data, tiles, passable, pairs, ledges, byte(layout.tilesets + data.tileset * 12 + 10), encounterTiles, layout.collisionBank === 1);
       }
       this.connect();
     } catch {
@@ -166,7 +209,7 @@ export class PokemonRegionGraph {
   }
 
   private label(data: PokemonMapData, tiles: Uint8Array, passable: ReadonlySet<number>,
-    pairs: readonly number[][], ledges: readonly number[][]): void {
+    pairs: readonly number[][], ledges: readonly number[][], grass: number, rightTiles: Uint8Array, yellow: boolean): void {
     const labels = new Int32Array(tiles.length).fill(-1), warpNodes = new Map<number, number>();
     const warpSquares = new Set(data.warps.filter(warp => warp.x < data.width && warp.y < data.height).map(warp => warp.y * data.width + warp.x));
     const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < data.width && y < data.height;
@@ -195,7 +238,10 @@ export class PokemonRegionGraph {
       const node = labels[square]! >= 0 ? labels[square]! : this.allocate();
       labels[square] = node; warpNodes.set(index, node);
     }
-    this.maps!.set(data.id, { data, labels, warpNodes });
+    const encounterNodes = new Set<number>();
+    for (let square = 0; square < labels.length; square++) if (labels[square]! >= 0 && !warpSquares.has(square) &&
+      landEncounterTile(data.id, data.tileset, grass, tiles[square]!, rightTiles[square]!, yellow)) encounterNodes.add(labels[square]!);
+    this.maps!.set(data.id, { data, labels, warpNodes, encounterNodes });
     for (const [index, warp] of data.warps.entries()) {
       const node = warpNodes.get(index);
       for (const direction of directions) {

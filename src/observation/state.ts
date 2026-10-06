@@ -20,6 +20,7 @@ export function createStateObserver(provider: GameStateProvider): ObservationPro
   return { kind: "state", readSnapshot(frame) { return provider.read(frame); }, availableActions(frame) { return provider.read(frame).actions; },
     ...(provider.createExecution ? { createExecution: (action) => provider.createExecution!(action) } : {}),
     ...(provider.shouldWait ? { shouldWait: (frame) => provider.shouldWait!(frame) } : {}),
+    ...(provider.onActionComplete ? { onActionComplete: (event) => provider.onActionComplete!(event) } : {}),
     setObjectives(objectives) { provider.setObjectives?.(objectives); },
     reset() { provider.reset?.(); }, setActionFrames(frames) { provider.setActionFrames?.(frames); }, async observe(frame, _previous, _objectives, signal) {
     signal.throwIfAborted();

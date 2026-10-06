@@ -17,7 +17,8 @@ export function validateGameState(state: GameState, frame: number): void {
     const support = state.decisionSupport;
     const validFacts = (facts: unknown, maximum: number) => Array.isArray(facts) && facts.length <= maximum &&
       facts.every((fact: unknown) => typeof fact === "string" && fact.length > 0 && fact.length <= 500);
-    if (!support || typeof support !== "object" || !validFacts(support.facts, 32) ||
+    if (!support || typeof support !== "object" ||
+        support.decisionGoal !== undefined && (typeof support.decisionGoal !== "string" || !support.decisionGoal.trim() || support.decisionGoal.length > 500) || !validFacts(support.facts, 32) ||
         !support.actionFacts || typeof support.actionFacts !== "object" || Array.isArray(support.actionFacts) ||
         Object.keys(support.actionFacts).length > 32 || Object.entries(support.actionFacts).some(([id, facts]) =>
           !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(id) || !validFacts(facts, 8))) {

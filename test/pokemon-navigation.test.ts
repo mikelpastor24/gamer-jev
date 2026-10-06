@@ -59,6 +59,40 @@ test("navigation keeps the chosen target, waits for movement, turns to interact,
   assert.deepEqual(outcomes, ["Dialogue interrupted navigation."]);
 });
 
+test("a selected grass square finishes on arrival without sending another input or choosing another square", () => {
+  let values: GameStateData["values"] = { phase: "overworld", mapId: 12, playerX: 1, playerY: 2 };
+  let route: PokemonRoute | undefined = { id: "walk_grass_2_2", context: "12:train", label: "Grass", length: 1,
+    nextButtons: ["RIGHT"], interact: false, arrivalOnly: true, x: 2, y: 2, towardObjective: false };
+  const execution = pokemonNavigationExecution(route.id, () => ({ state: { values, descriptions: {} }, route }), 8, () => {});
+  assert.deepEqual(execution.next(), { done: false, buttons: ["RIGHT"] });
+  values = { ...values, playerX: 2, movementInProgress: true }; route = undefined;
+  assert.deepEqual(execution.next(), { done: false, buttons: [] });
+  values = { ...values, movementInProgress: false };
+  assert.deepEqual(execution.next(), { done: true, reason: "Selected walking square reached; reassess observed encounters." });
+});
+
+test("a selected long route yields once a new pickup becomes nearby without selecting or collecting it", () => {
+  let state: GameStateData = { values: { phase: "overworld", mapId: 12, playerX: 0, playerY: 0 }, descriptions: {} };
+  const route: PokemonRoute = { id: "go_exit_1", context: "12:progress", label: "Exit", length: 20,
+    nextButtons: ["RIGHT"], interact: false, x: 20, y: 0, towardObjective: true };
+  let nearbyPickups = ["interact_object_1"];
+  const read = () => ({ state, route, nearbyPickups });
+  const execution = pokemonNavigationExecution(route.id, read, 1, () => {});
+  assert.deepEqual(execution.next(), { done: false, buttons: ["RIGHT"] });
+  nearbyPickups = ["interact_object_1", "interact_object_2"];
+  state = { ...state, values: { ...state.values, movementInProgress: true } };
+  assert.deepEqual(execution.next(), { done: false, buttons: [] }, "Walking settles before requesting a new decision.");
+  state = { ...state, values: { ...state.values, movementInProgress: false, playerX: 1 } };
+  const next = execution.next(); assert.equal(next.done, true);
+  if (next.done) assert.match(next.reason, /new nearby collectible.*Jev must reassess/);
+  const continued = pokemonNavigationExecution(route.id, read, 1, () => {});
+  assert.equal(continued.next().done, false, "Jev can deliberately continue past an already observed opportunity.");
+  const pickup = { ...route, id: "interact_object_2", label: "Item ball: TEST", interact: true };
+  const selectedPickup = pokemonNavigationExecution(pickup.id, () => ({ state, route: pickup, nearbyPickups }), 1, () => {});
+  nearbyPickups.push("interact_object_3");
+  assert.equal(selectedPickup.next().done, false, "Another pickup cannot replace or interrupt the selected pickup target.");
+});
+
 test("unreachable and stagnant targets are bounded and cannot substitute another action", () => {
   const route: PokemonRoute = { id: "go_exit_1", context: "37:meet_oak", label: "Exit", length: 0, nextButtons: [], interact: false, x: 1, y: 1, towardObjective: true };
   const state = { values: { phase: "overworld", mapId: 37, playerX: 1, playerY: 1 }, descriptions: {} };

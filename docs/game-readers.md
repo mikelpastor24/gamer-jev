@@ -34,6 +34,7 @@ interface GameReader {
   setObjectives?(objectives: Objectives): void;
   createExecution?(memory: GameReaderMemory, action: AgentAction): GameActionExecution;
   shouldWait?(state: GameStateData, frame: number): boolean;
+  onActionComplete?(event: CompletedGameAction): void;
   reset?(): void;
 }
 ```
@@ -92,6 +93,7 @@ response still counts toward session limits and remains inspectable in the log.
 
 ```ts
 decisionSupport: {
+  decisionGoal: "Reach the nearby door before continuing across this room.",
   facts: ["A door is visible at (7, 1)."],
   actionFacts: { press_right: ["This direction starts a route to that door."] },
 }
@@ -105,6 +107,13 @@ Return at most 32 facts and 32 action IDs, with up to eight facts per ID and
 500 characters per fact. The binding keeps action facts only for the choices
 actually offered. Facts are advisory: supplying route evidence alone does not
 choose a destination or execute a path.
+
+Optional `decisionGoal` is a nonempty immediate task of at most 500 characters.
+Jev's shared question considers it before distant milestones, while supplied
+objectives and constraints remain authoritative. State and optional vision
+observers preserve it; the shared runtime does not interpret it or choose an
+action. Use current eligibility and resources when supplying a task, so future
+preparation does not masquerade as something possible on the current screen.
 
 ### Optional destination execution
 
@@ -133,6 +142,17 @@ It continues to enforce session time limits and cancellation. Do not use this
 hook to choose gameplay inputs or bypass a dialogue that requires a choice.
 Readers without these hooks retain the existing controller loop; declarative
 JSON profiles do not provide executable code.
+
+The optional `onActionComplete` hook receives the selected action, its actual
+frame range and interruption status, and validated local before/after state
+when available. It runs once per executed action through state and optional
+vision observers; cancelled actions have no after-state. A reader can retain
+bounded semantic outcome memory across maps or battles. This callback cannot
+advance the emulator or choose another action. State differences alone do not
+prove progress. Reset/restore and objective changes must invalidate relevant
+memory. Profiles can also offer input-free semantic actions: Jev chooses a
+purpose, a profile executor stores it and returns `done`, and later choices
+remain with Jev. Normal release frames and session/request limits still apply.
 
 `GameReaderMemory` always supplies `readMemory`. Its optional `readRom` capability
 returns a copy of a slice of the loaded cartridge by absolute byte offset,
@@ -266,6 +286,9 @@ hash, so checkpoints from its earlier version are incompatible.
 Shipped readers cover the original demo and exact English Pokémon Red, Blue,
 and Yellow revisions documented in [Pokémon readers](pokemon-readers.md).
 Their Gen I decoding is shared separately from revision-specific hashes and
-layouts. Other games need their own verified reader or can use generic
+layouts. Profile-local adjuncts such as `PokemonPreparationSupport` can turn
+decoded health, resources and upcoming challenges into bounded advisory facts
+and action descriptions, while the reader keeps current legality and execution.
+These adjuncts neither call models nor select controller inputs. Other games need their own verified reader or can use generic
 controller actions with vision.
 No shared memory map can determine valid gameplay choices for arbitrary ROMs.

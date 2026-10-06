@@ -7,6 +7,7 @@ export interface MapSpec {
   readonly tile?: (x: number, y: number) => number;
   readonly warps: readonly (readonly [number, number, number, number])[]; // x, y, destination, zero-based landing warp
   readonly connections?: readonly (readonly [number, number, number, number])[]; // direction, map, x alignment, y alignment
+  readonly objects?: readonly { readonly picture: number; readonly trainer?: number; readonly item?: number }[];
 }
 
 /** Invented maps, block quadrants, collision lists and headers. No commercial ROM data. */
@@ -38,11 +39,21 @@ export function cartridge(yellow: boolean, maps: readonly MapSpec[]) {
     const objects = 5 * 0x4000 + 0x1800 + index * 128;
     bytes[objects + 1] = map.warps.length;
     map.warps.forEach(([x, y, destination, warp], i) => bytes.set([y, x, warp, destination], objects + 2 + i * 4));
+    let cursor = objects + 2 + map.warps.length * 4;
+    bytes[cursor++] = 0; // No signs.
+    bytes[cursor++] = map.objects?.length ?? 0;
+    for (const sprite of map.objects ?? []) {
+      bytes.set([sprite.picture, 5, 5, 0, 0, sprite.trainer ? 0x40 : sprite.item ? 0x80 : 0,
+        ...(sprite.trainer ? [sprite.trainer, 1] : sprite.item ? [sprite.item] : [])], cursor);
+      cursor += sprite.trainer ? 8 : sprite.item ? 7 : 6;
+    }
     for (let by = 0; by < 4; by++) for (let bx = 0; bx < 4; bx++) {
       const block = index * 16 + by * 4 + bx;
       bytes[5 * 0x4000 + 0x3000 + index * 16 + by * 4 + bx] = block;
       for (let qy = 0; qy < 2; qy++) for (let qx = 0; qx < 2; qx++) {
-        bytes[4 * 0x4000 + 0x1000 + block * 16 + (qy * 2 + 1) * 4 + qx * 2] = map.tile?.(bx * 2 + qx, by * 2 + qy) ?? 0;
+        const tile = map.tile?.(bx * 2 + qx, by * 2 + qy) ?? 0;
+        const offset = 4 * 0x4000 + 0x1000 + block * 16 + (qy * 2 + 1) * 4 + qx * 2;
+        bytes[offset] = tile; bytes[offset + 1] = tile;
       }
     }
   }
@@ -59,4 +70,3 @@ export const forestJourney: readonly MapSpec[] = [
   { id: 47, warps: [[3, 0, 255, 1], [3, 7, 51, 0]] },
   { id: 2, warps: [], connections: [[1, 13, 0, 0]] },
 ];
-

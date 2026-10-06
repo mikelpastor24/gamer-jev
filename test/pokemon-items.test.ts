@@ -143,6 +143,37 @@ function execute(fixture: ItemFixture, reader: ReturnType<typeof createPokemonRe
 }
 
 for (const variant of variants) {
+  test(variant.name + " prioritizes an eligible species absent from the team independently of types and Pokedex ownership", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create();
+    fixture.ram[variant.mon.enemyMon + 5] = 20; fixture.ram[variant.mon.enemyMon + 6] = 20;
+    fixture.ram.fill(255, variant.mon.pokedexOwned, variant.mon.pokedexOwned + 19);
+    let state = snapshot(fixture, reader), actions = reader.availableActions(state, buttons);
+    assert.match(actions.find(action => action.id === "open_capture_bag")!.description, /^Priority: capture this species absent from the team/);
+    assert.ok(state.decisionSupport!.facts.slice(0, 5).some(fact => /Priority: attempt to capture this eligible wild species/.test(fact)));
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /Pokedex ownership and shared types/);
+    fixture.list(); state = snapshot(fixture, reader);
+    assert.match(reader.availableActions(state, buttons).find(action => action.id === "throw_ball_slot_2")!.description, /^Priority:/);
+    fixture.command(); fixture.ram[variant.mon.enemyMon] = 176; fixture.ram[variant.items.enemySpecies] = 176;
+    state = snapshot(fixture, reader);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "open_capture_bag"));
+    assert.doesNotMatch(reader.availableActions(state, buttons).find(action => action.id === "open_capture_bag")!.description, /^Priority:/);
+    fixture.ram[variant.mon.enemyMon] = 19; fixture.ram[variant.items.enemySpecies] = 19;
+    fixture.ram[variant.mon.partyMons + 33] = 0; state = snapshot(fixture, reader);
+    assert.doesNotMatch(reader.availableActions(state, buttons).find(action => action.id === "open_capture_bag")!.description, /^Priority:/);
+    fixture.ram[variant.mon.partyMons + 33] = 5; fixture.bag([[20, 2]]); state = snapshot(fixture, reader);
+    assert.ok(!reader.availableActions(state, buttons).some(action => action.id === "open_capture_bag"));
+    assert.match(state.decisionSupport!.facts.join(" "), /Priority: this eligible wild species.*Buy balls at a Mart/);
+    assert.match(state.decisionSupport!.decisionGoal!, /Capture is currently unavailable.*damaging move or an escape attempt/);
+    assert.ok(!state.decisionSupport!.actionFacts.use_move_1?.some(fact => /If you want this wild Pokemon/.test(fact)));
+    assert.doesNotMatch(state.decisionSupport!.facts.join(" "), /Avoid knocking out a desired capture|choose attacks that will not knock it out/);
+    fixture.ram[variant.mon.battleKind] = 2; state = snapshot(fixture, reader);
+    assert.doesNotMatch(state.decisionSupport!.facts.join(" "), /Priority: (attempt to capture this eligible|this eligible wild species)/);
+    fixture.list(true); state = snapshot(fixture, reader);
+    assert.match(reader.availableActions(state, buttons).find(action => action.id === "choose_shop_item_slot_1")!.description, /^Priority: buy missing capture balls/);
+    assert.match(state.decisionSupport!.decisionGoal!, /Obtain missing capture balls.*separately choose quantity/);
+    assert.equal(fixture.confirmations.length, 0, "Reading priorities never buys or throws anything.");
+  });
+
   test(variant.name + " exposes bounded inventory names, ordinary ball counts and team evidence without writes", () => {
     const fixture = new ItemFixture(variant), reader = variant.create(), before = fixture.ram.slice();
     const state = snapshot(fixture, reader), facts = state.decisionSupport!.facts.join(" ");
@@ -221,6 +252,7 @@ for (const variant of variants) {
     const state = snapshot(fixture, reader);
     assert.equal(state.values.phase, "text"); assert.match(state.decisionSupport!.facts.join(" "), /quantity prompt: 5/);
     const actions = reader.availableActions(state, buttons); validateAgentActions(actions, GAME_BOY_DESCRIPTOR.buttons);
+    assert.equal(actions.find(action => action.id === "press_a")!.frames, 1, "Quantity acceptance cannot also confirm its later price.");
     assert.ok(actions.some(action => action.id === "press_up")); assert.ok(actions.some(action => action.id === "press_down"));
     assert.ok(!actions.some(action => ["press_left", "press_right", "press_start", "press_select"].includes(action.id)));
     fixture.ram[variant.items.quantity] = 6; tiles[10 * 20 + 10] = 0xfc;
@@ -230,6 +262,17 @@ for (const variant of variants) {
     assert.ok(!reader.availableActions(snapshot(fixture, reader), buttons).some(action => action.id === "press_up"));
   });
 }
+
+test("item navigation does not overshoot its selected slot when every frame repeats the direction", () => {
+  let state: PokemonItemExecutionState = { context: "bag", menu: "bag", commandX: 9, commandY: 16, selected: 0, slots: [1] };
+  const execution = pokemonItemExecution({ kind: "ball", slot: 1 }, () => state, 8), inputs: string[] = [];
+  for (let frame = 0; frame < 100; frame++) {
+    const step = execution.next(); if (step.done) break;
+    const button = step.buttons[0]; if (button) inputs.push(button);
+    if (button === "DOWN") state = { ...state, selected: state.selected + 1 };
+  }
+  assert.deepEqual(inputs, ["DOWN", "A"]); assert.equal(state.selected, 1);
+});
 
 test("item executors stop on changed context or closed menus and bound ignored controls without another choice", () => {
   let state: PokemonItemExecutionState = { context: "original", menu: "bag", commandX: 0, commandY: 0, selected: 0, slots: [1] };

@@ -326,10 +326,12 @@ export class AgentSession {
     try { this.active.execution?.finish?.(executionReason ?? "Profile action completed."); }
     catch { this.diagnose("warn", "execution-feedback-failed", { actionId: this.active.action.id }); }
     let result: ActionRecord["result"];
+    let afterState: GameState | undefined;
     if (!interrupted) {
       const frame = this.emulator.captureFrame();
       const snapshot = this.options.observer.readSnapshot?.(frame);
       if (snapshot) validateGameState(snapshot.state, frame.number);
+      afterState = snapshot?.state;
       result = actionResult(frame.number, this.active.screenHash !== createHash("sha256").update(frame.pixels).digest("hex"),
         this.active.beforeState, snapshot?.state);
     }
@@ -339,6 +341,9 @@ export class AgentSession {
     this.history.push(record);
     this.history = this.history.slice(-12);
     this.record({ type: "action", ...record });
+    try { this.options.observer.onActionComplete?.({ action: structuredClone(this.active.action), record: structuredClone(record),
+      ...(this.active.beforeState ? { before: structuredClone(this.active.beforeState) } : {}), ...(afterState ? { after: structuredClone(afterState) } : {}) }); }
+    catch { this.diagnose("warn", "profile-action-feedback-failed", { actionId: this.active.action.id }); }
     this.diagnose("info", "action-completed", { ...record, advancedFrames: record.toFrame - record.fromFrame });
   }
 

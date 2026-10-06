@@ -6,6 +6,7 @@ export function withVision(state: ObservationProvider, vision: VisionProvider): 
     ...(state.readSnapshot ? { readSnapshot: (frame) => state.readSnapshot!(frame) } : {}),
     ...(state.createExecution ? { createExecution: (action) => state.createExecution!(action) } : {}),
     ...(state.shouldWait ? { shouldWait: (frame) => state.shouldWait!(frame) } : {}),
+    ...(state.onActionComplete ? { onActionComplete: (event) => state.onActionComplete!(event) } : {}),
     setObjectives(objectives) { state.setObjectives?.(objectives); },
     reset() { state.reset?.(); }, setActionFrames(frames) { state.setActionFrames?.(frames); }, async observe(frame, previous, objectives, signal) {
     const local = await state.observe(frame, previous, objectives, signal);

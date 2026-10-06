@@ -25,6 +25,7 @@ const stateKey = (values: Readonly<Record<string, StateValue>>) => JSON.stringif
 /** Inventory and capture evidence. Offers choices; never selects a shopping or capture goal. */
 export class PokemonItemSupport {
   readonly catalog: PokemonItemCatalog;
+  captureAvailable = false;
   private snapshot: Snapshot | undefined;
   constructor(private readonly layout: PokemonItemLayout, private readonly mon: GenerationOneLayout,
     private readonly battle: PokemonBattleLayout) {
@@ -34,7 +35,7 @@ export class PokemonItemSupport {
       throw new Error("Invalid Generation I item layout.");
     }
   }
-  reset(): void { this.catalog.reset(); this.snapshot = undefined; }
+  reset(): void { this.catalog.reset(); this.snapshot = undefined; this.captureAvailable = false; }
   executionState(): PokemonItemExecutionState | undefined { return this.snapshot; }
   contextKey(state: GameState): string | undefined { return this.snapshot?.stateKey === stateKey(state.values) ? this.snapshot.context : undefined; }
   target(id: string): PokemonItemTarget | undefined { return this.snapshot?.choices.find(choice => choice.id === id)?.target; }
@@ -44,9 +45,11 @@ export class PokemonItemSupport {
 
   read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>): GameStateData {
     this.snapshot = undefined;
+    this.captureAvailable = false;
+    let decisionGoal: string | undefined;
     const values: Record<string, StateValue> = {}, descriptions: Record<string, string> = {};
     const facts: string[] = [], actionFacts: Record<string, string[]> = {};
-    const finish = (): GameStateData => ({ values, descriptions, decisionSupport: { facts, actionFacts } });
+    const finish = (): GameStateData => ({ values, descriptions, decisionSupport: { facts, actionFacts, ...(decisionGoal ? { decisionGoal } : {}) } });
     if (state.gameStarted !== true) return finish();
     this.catalog.load(memory);
     const u8 = (address: number) => ram[address - 0xc000]!;
@@ -79,11 +82,28 @@ export class PokemonItemSupport {
     const tower = Number(state.mapId) >= 0x90 && Number(state.mapId) <= 0x94;
     // The scripted Marowak in Tower 6F is not capturable, even after obtaining the Scope.
     const ghost = tower && (!items.some(item => item.id === 0x48) || state.mapId === 0x93 && u8(this.layout.enemySpecies) === 0x91);
-    const capture = normalBattle && state.battleKind === "wild" && validBag && balls! > 0 && alive(player) && alive(enemy) &&
+    const eligibleTarget = normalBattle && state.battleKind === "wild" && alive(player) && alive(enemy) &&
       u8(this.layout.enemySpecies) === enemy[0] && partyCount >= 1 && partyCount <= 6 &&
       (partyCount < 6 || boxCount < 20) && !ghost;
+    const capture = eligibleTarget && validBag && balls! > 0;
+    this.captureAvailable = Boolean(capture);
+    const teamSpecies: number[] = [];
+    let speciesKnown = partyCount >= 1 && partyCount <= 6;
+    if (speciesKnown) for (let slot = 0; slot < partyCount; slot++) {
+      const address = this.mon.partyMons + slot * 44, id = u8(address), hp = u8(address + 1) * 256 + u8(address + 2),
+        maximum = u8(address + 34) * 256 + u8(address + 35), level = u8(address + 33);
+      if (id > 0 && id <= 190 && maximum > 0 && hp <= maximum && level >= 1 && level <= 100) teamSpecies.push(id);
+      else speciesKnown = false;
+    }
+    const newTeamTarget = eligibleTarget && speciesKnown && !teamSpecies.includes(u8(this.layout.enemySpecies));
+    const capturePriority = capture && newTeamTarget;
+    if (newTeamTarget) {
+      facts.unshift(capturePriority ?
+        "Priority: attempt to capture this eligible wild species: it is absent from the current team. Pokedex ownership and shared types do not remove this priority. Select open_capture_bag, then a ball; avoid knocking it out. A ball attempt is not success. Healing remains a post-battle priority." :
+        "Priority: this eligible wild species is absent from the current team, but no usable capture balls are verified. Do not pretend it can be captured now. Buy balls at a Mart before more encounters when affordable and storable; this battle still requires Jev's legal choices.");
+    } else if (eligibleTarget && speciesKnown) facts.push("The wild species is already in the current team. Another capture remains a legal choice, but is not prioritized as a new team species.");
     if (normalBattle && state.battleKind === "wild" && alive(enemy)) {
-      facts.push(`Wild capture evidence: HP ${enemy[1]! * 256 + enemy[2]!}/${enemy[15]! * 256 + enemy[16]!}; status byte ${enemy[4]}; catch-rate threshold ${u8(this.layout.catchRate)}/255 (not a success percentage). Lower HP, sleep/freeze and other supported status conditions improve ordinary captures. Defeating the enemy prevents capturing it; choose attacks that will not knock it out if you want to catch it.`);
+      if (capture) facts.push(`Wild capture evidence: HP ${enemy[1]! * 256 + enemy[2]!}/${enemy[15]! * 256 + enemy[16]!}; status byte ${enemy[4]}; catch-rate threshold ${u8(this.layout.catchRate)}/255 (not a success percentage). Lower HP and supported status conditions improve ordinary captures. Defeating the enemy prevents capturing it; choose attacks that will not knock it out if you want to catch it.`);
       const teamTypes = new Set<number>();
       let teamKnown = partyCount >= 1 && partyCount <= 6;
       if (partyCount <= 6) for (let slot = 0; slot < partyCount; slot++) {
@@ -134,11 +154,15 @@ export class PokemonItemSupport {
     }
     const choices: Snapshot["choices"][number][] = [];
     const canConfirm = menu !== "bag" || selected === count || !ball(items[selected]!.id) || capture;
+    if (capturePriority && ["command", "moves"].includes(menu)) {
+      const warning = "Priority: try to capture this species absent from the team before an attack could knock it out. Prefer opening the capture bag; Pokedex ownership and shared types do not remove this priority.";
+      for (const id of ["press_a", "use_move_1", "use_move_2", "use_move_3", "use_move_4"]) actionFacts[id] = [warning];
+    }
     if (capture && ["command", "moves"].includes(menu)) choices.push({ target: { kind: "bag" }, id: "open_capture_bag",
-      description: "Open ITEM in this wild battle to inspect capture balls. Do not throw anything yet; Jev chooses a ball in the next observation." });
+      description: `${capturePriority ? "Priority: capture this species absent from the team. " : ""}Open ITEM in this wild battle to inspect capture balls. Do not throw anything yet; Jev chooses a ball in the next observation.` });
     if (menu === "bag" && capture) items.forEach((item, slot) => {
       if (ball(item.id)) choices.push({ target: { kind: "ball", slot }, id: `throw_ball_slot_${slot + 1}`,
-        description: `Throw one ${this.catalog.name(item.id) ?? `ballId=${item.id}`} from bag slot ${slot + 1} (${item.quantity} left). ${item.id === 1 ? "Master Ball is a scarce guaranteed capture for an eligible target." : item.id === 2 ? "Ultra Ball is stronger than a Poke Ball." : item.id === 3 ? "Great Ball improves ordinary captures over a Poke Ball." : "Ordinary Poke Ball; success is not guaranteed."} Navigate to exactly this slot and confirm once.` });
+        description: `${capturePriority ? "Priority: attempt this new team species. " : ""}Throw one ${this.catalog.name(item.id) ?? `ballId=${item.id}`} from bag slot ${slot + 1} (${item.quantity} left). ${item.id === 1 ? "Master Ball is a scarce guaranteed capture for an eligible target." : item.id === 2 ? "Ultra Ball is stronger than a Poke Ball." : item.id === 3 ? "Great Ball improves ordinary captures over a Poke Ball." : "Ordinary Poke Ball; success is not guaranteed."} Navigate to exactly this slot and confirm once.` });
     });
     if (menu === "shop") {
       facts.push("Verified Mart BUY list. Choosing an item opens the quantity prompt; Jev must separately choose quantity and confirm the total price. UP increases quantity, DOWN decreases it, A proceeds, B cancels. A later YES confirms the purchase. Selling is a different menu.");
@@ -149,7 +173,7 @@ export class PokemonItemSupport {
         const limit = capacity !== undefined && affordable !== undefined ? Math.min(capacity, affordable, 99) : undefined;
         facts.push(`Shop slot${slot + 1}: ${name ?? `itemId=${id}`}; unit price ${price ?? "unknown"}; currently affordable/storable quantity ${limit ?? "unknown"}.`);
         if (name && limit !== undefined && limit > 0) choices.push({ target: { kind: "shop", slot }, id: `choose_shop_item_slot_${slot + 1}`,
-          description: `Select ${name} at Mart slot ${slot + 1}, unit price ${price}; at most ${limit} currently affordable/storable. Open its quantity prompt with one confirmation; do not automatically buy or choose a quantity.` });
+          description: `${balls === 0 && ball(id) ? "Priority: buy missing capture balls for species absent from the team. " : ""}Select ${name} at Mart slot ${slot + 1}, unit price ${price}; at most ${limit} currently affordable/storable. Open its quantity prompt with one confirmation; do not automatically buy or choose a quantity.` });
       });
     }
     if (menu === "bag") {
@@ -157,6 +181,13 @@ export class PokemonItemSupport {
       actionFacts.press_a = [selected === count ? "A selects CANCEL, returning to battle commands." : `A uses bag slot ${selected + 1}: ${this.catalog.name(items[selected]!.id) ?? `itemId=${items[selected]!.id}`} x${items[selected]!.quantity}.`];
     }
     for (const choice of choices) actionFacts[choice.id] = [choice.description];
+    if (["command", "moves"].includes(menu) && normalBattle && alive(player) && alive(enemy)) {
+      decisionGoal = capturePriority ? "Attempt to capture this eligible wild species absent from the team now: choose open_capture_bag, then a ball. Do not knock it out while a legal ball attempt is available. Healing follows the battle; team types and Pokedex ownership do not remove this capture priority." :
+        !capture && state.battleKind === "wild" ? "Resolve this wild battle so the party can reach healing or supplies. Capture is currently unavailable; repeated weakening cannot make a missing ball or blocked capture possible. Choose a usable damaging move or an escape attempt. Status moves do no direct damage; do not repeat an exhausted effect. Buy balls after leaving this battle." : undefined;
+    } else if (menu === "bag" && capturePriority) decisionGoal = "Attempt to capture this wild species absent from the team: select one available throw_ball_slot action. It throws exactly one chosen ball; success is not guaranteed. Do not return to attacking unless current evidence or supplied constraints justify it.";
+    else if (menu === "shop" && balls === 0 && choices.some(choice => choice.description.startsWith("Priority:"))) decisionGoal = "Obtain missing capture balls before more wild encounters. Select an affordable, storable ball from this BUY list; Jev must separately choose quantity and confirm the total price. Selecting an item does not buy it.";
+    else if (menu === "quantity") decisionGoal = "Choose the Mart quantity using the current displayed value, price, money and bag capacity, then proceed to the separate total-price confirmation. Do not repeat quantity adjustments without a purchase plan.";
+    else if (shopContext && balls === 0) decisionGoal = "Continue obtaining missing capture supplies through this shop prompt. Review the displayed item, quantity and total price against money and bag capacity before choosing a confirmation. A prompt or menu change does not prove that balls were purchased; inspect inventory afterward.";
     this.snapshot = { context, menu, commandX: Number(state.menuCursorX), commandY: Number(state.menuCursorY), selected: menu === "quantity" ? quantity : selected, canConfirm,
       slots: choices.flatMap(choice => "slot" in choice.target ? [choice.target.slot] : []), choices, stateKey: stateKey({ ...state, ...values }) };
     return finish();

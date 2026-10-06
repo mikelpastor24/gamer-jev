@@ -6,9 +6,9 @@ export function pokemonObjectives(starter: "choice" | "pikachu"): Objectives {
     goal: "Become the Pokemon League Champion by defeating the Elite Four and the Champion.",
     constraints: [
       "Use dialogue and observed game state to decide the next useful destination. Complete necessary story prerequisites before attempting later milestones.",
-      "Keep the party healthy and prepare for battles. Repeated menu toggles, completed conversations, and pacing between equivalent exits do not advance the story.",
-      "Prepare useful type coverage and backup before gyms: buy capture balls when needed, consider suitable wild Pokemon, weaken without knocking them out, and select a ball explicitly. Heal and train new members; party size alone does not prove readiness.",
-      "Consider reachable visible item balls for useful supplies and key items. Check bag capacity, money, HP, levels and move PP before continuing; choose shopping or healing detours when needed instead of repeatedly attempting an unprepared gym.",
+      "After every battle, check every party member. If any has 50% HP or less, is fainted or has a status condition, or ordinary attack PP is low, prioritize a Pokemon Center before onward travel or optional fights. Interact with its nurse and inspect HP, status and PP afterward; arrival or opening START is not healing. Repeated menus, conversations and pacing do not advance the story.",
+      "Attempt to capture every eligible wild species absent from the current team, even if already owned in the Pokedex or sharing team types. Prioritize missing capture balls, avoid knocking out the target, and select a ball explicitly. Respect verified capture eligibility and storage capacity. Heal and train new members; review the upcoming challenge's levels, types and your usable attacks before gyms.",
+      "Prioritize reachable nearby verified item balls before routine travel when bag space permits; ordinary NPCs and starter balls are not loot. Urgent healing comes first. Verify the pickup through inventory or object changes. Check money, HP, levels and move PP before continuing; prepare instead of repeatedly attempting an unprepared gym.",
     ],
     milestones: [
       "Leave the player's house: use the stairs from the upper floor, reach a ground-floor exit mat, and press toward the outside. Walk north from Pallet Town toward Route 1 to meet Professor Oak.",

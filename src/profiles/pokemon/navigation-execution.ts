@@ -13,6 +13,9 @@ export interface PokemonRoute {
   readonly destination?: number;
   readonly towardObjective: boolean;
   readonly navigationFact?: string;
+  readonly arrivalOnly?: boolean;
+  readonly nearbyPickup?: boolean;
+  readonly stepOffWarp?: boolean;
 }
 
 export interface PokemonRouteOutcome {
@@ -37,19 +40,20 @@ export class PokemonRouteFeedback {
 }
 
 /** Replans only the destination selected by Jev. Reads state; the runner advances frames. */
-export function pokemonNavigationExecution(id: string, read: () => { state: GameStateData; route: PokemonRoute | undefined },
+export function pokemonNavigationExecution(id: string, read: () => { state: GameStateData; route: PokemonRoute | undefined; nearbyPickups?: readonly string[] },
   pulseFrames: number, remember: (initial: PokemonRoute, outcome: PokemonRouteOutcome, reason: string) => void): GameActionExecution {
   const initial = read();
   if (!initial.route || initial.state.values.phase !== "overworld") throw new Error("The selected navigation target is no longer available.");
   const target = initial.route;
   const map = initial.state.values.mapId;
+  const initialPickups = new Set(initial.nearbyPickups ?? []);
   let lastPosition = `${initial.state.values.playerX},${initial.state.values.playerY}`;
   let stagnant = 0, release = 0, held = 0, button = "", interactionSent = false, mapChanged = false;
   let closestDistance = target.length;
   let finished = false;
   return {
     next() {
-      const { state, route } = read(), values = state.values;
+      const { state, route, nearbyPickups } = read(), values = state.values;
       if (values.mapId !== map) { mapChanged = true; return { done: true, reason: "Map changed; reassess the selected destination." }; }
       if (values.phase !== "overworld") return { done: true, reason: "Dialogue, battle, menu, or script interrupted navigation." };
       if (values.controlBusy === true) return { done: true, reason: "An overworld script took control; reassess after local settling." };
@@ -58,6 +62,10 @@ export function pokemonNavigationExecution(id: string, read: () => { state: Game
       else stagnant++;
       if (stagnant > 120) return { done: true, reason: "No settled movement toward this target; reassess obstacles or scripts." };
       if (values.movementInProgress === true) { held = 0; release = Math.max(release, 4); return { done: false, buttons: [] }; }
+      if (!target.label.startsWith("Item ball:") && nearbyPickups?.some(pickup => pickup !== id && !initialPickups.has(pickup))) {
+        return { done: true, reason: "A new nearby collectible item is available; Jev must reassess pickup versus the selected destination." };
+      }
+      if (target.arrivalOnly && Number(values.playerX) === target.x && Number(values.playerY) === target.y) return { done: true, reason: "Selected walking square reached; reassess observed encounters." };
       if (!route) return { done: true, reason: "Selected target is no longer reachable with the current walking rules." };
       if (route.id !== id) throw new Error("Navigation cannot substitute a different target.");
       if (route.context !== target.context) return { done: true, reason: "The selected target context changed; reassess the current objective." };

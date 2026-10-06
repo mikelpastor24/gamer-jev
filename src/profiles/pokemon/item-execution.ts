@@ -29,6 +29,8 @@ export function pokemonItemExecution(target: PokemonItemTarget, read: () => Poke
     }
     if (current.menu === "pending") { held = 0; return { done: false, buttons: [] }; }
     if (!available(current)) return { done: true, reason: "The selected item menu closed or the choice became unavailable." };
+    if (held && (target.kind === "bag" ? current.menu === "command" &&
+        (button === "LEFT" && current.commandX === 9 || button === "DOWN" && current.commandY === 16) : current.selected === target.slot)) { held = 0; release = 6; }
     if (release) { release--; return { done: false, buttons: [] }; }
     if (!held) {
       button = target.kind === "bag" ? current.menu === "moves" ? "B" : current.commandX !== 9 ? "LEFT" :

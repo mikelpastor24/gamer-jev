@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AgentAction, GameActionExecution, ObservationProvider, StateSnapshot } from "../src/core/agent.js";
+import type { AgentAction, CompletedGameAction, GameActionExecution, ObservationProvider, StateSnapshot } from "../src/core/agent.js";
 import type { Emulator, EmulatorAction, EmulatorState } from "../src/core/emulator.js";
 import { GAME_BOY_DESCRIPTOR } from "../src/emulator/game-boy/game-boy-emulator.js";
 import { AgentSession } from "../src/runner/agent-session.js";
@@ -24,7 +24,7 @@ class FrameFixture implements Emulator {
 
 const target: AgentAction = { id: "approach_target", description: "Approach the selected fixture target.", buttons: [], frames: 20, stop: false, execution: "profile", availabilityKey: "target-one" };
 const goal = { goal: "Approach a fixture target", constraints: [], milestones: [] };
-function setup(execution: GameActionExecution, options: { frames?: number; shouldWait?: (frame: number) => boolean; missingExecutor?: boolean; setObjectives?: ObservationProvider["setObjectives"] } = {}) {
+function setup(execution: GameActionExecution, options: { frames?: number; shouldWait?: (frame: number) => boolean; missingExecutor?: boolean; setObjectives?: ObservationProvider["setObjectives"]; onActionComplete?: ObservationProvider["onActionComplete"] } = {}) {
   const emulator = new FrameFixture();
   const records: Record<string, unknown>[] = [];
   let observations = 0, decisions = 0;
@@ -32,6 +32,7 @@ function setup(execution: GameActionExecution, options: { frames?: number; shoul
   const read = (): StateSnapshot => ({ state: { source: "fixture", frame: emulator.frameNumber, values: { clock: emulator.frameNumber }, descriptions: {} }, actions });
   const observer: ObservationProvider = { kind: "state", readSnapshot: read,
     ...(options.setObjectives ? { setObjectives: options.setObjectives } : {}),
+    ...(options.onActionComplete ? { onActionComplete: options.onActionComplete } : {}),
     ...(options.shouldWait ? { shouldWait: (frame) => options.shouldWait!(frame.number) } : {}),
     ...(options.missingExecutor ? {} : { createExecution: () => execution }),
     async observe() { observations++; const snapshot = read(); return { text: "A fixture target is visible.", model: "fixture", usage: { inputTokens: 0, outputTokens: 0 }, gameState: snapshot.state, actions: snapshot.actions }; },
@@ -58,6 +59,30 @@ test("a model-selected profile action executes validated steps and records its a
     assert.equal(action.actionId, target.id); assert.equal(action.fromFrame, 0); assert.equal(action.toFrame, 9);
     assert.equal(action.executionReason, "Destination reached.");
   } finally { fixture.session.stop("Test finished."); }
+});
+
+test("profile feedback receives actual before/after frames through optional vision and reports cancellation once", async () => {
+  const outcomes: CompletedGameAction[] = [];
+  const fixture = setup({ next: () => ({ done: true, reason: "Selected purpose stored without input." }) },
+    { onActionComplete: event => outcomes.push(event) });
+  const combined = withVision(fixture.observer, { async observe() { return { text: "Fixture", model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } }; } });
+  fixture.session.setProviders({ mode: "mock", observer: combined, decider: { async decide() {
+    return { actionId: target.id, confidence: null, probabilities: {}, model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } };
+  } } }); fixture.session.resume();
+  try {
+    await runAgentHeadless(fixture.emulator, fixture.session, new AbortController().signal);
+    assert.equal(outcomes.length, 1); assert.equal(outcomes[0]!.action.id, target.id);
+    assert.equal(outcomes[0]!.record.fromFrame, 0); assert.equal(outcomes[0]!.record.toFrame, 4);
+    assert.equal(outcomes[0]!.before!.values.clock, 0); assert.equal(outcomes[0]!.after!.values.clock, 4);
+    assert.ok(fixture.emulator.inputs.every(input => input.buttons.length === 0));
+  } finally { fixture.session.stop("Test finished."); }
+  const cancelled = setup({ next: () => ({ done: false, buttons: ["UP"] }) }, { onActionComplete: event => outcomes.push(event) });
+  try {
+    cancelled.session.tick(1); await cancelled.session.waitForPending(); cancelled.session.tick(3);
+    cancelled.session.pause(); cancelled.session.pause(); cancelled.session.stop("Test cancellation.");
+    assert.equal(outcomes.length, 2); assert.equal(outcomes[1]!.record.interrupted, true);
+    assert.equal(outcomes[1]!.record.toFrame, 3); assert.equal(outcomes[1]!.after, undefined);
+  } finally { cancelled.session.stop("Test finished."); }
 });
 
 test("objective edits cancel a selected target and update the reader without resetting counters", async () => {

@@ -18,6 +18,7 @@ import { RequestBudget } from "../src/providers/requests.js";
 import { RED_BLUE_NAVIGATION, YELLOW_NAVIGATION } from "../src/profiles/pokemon/navigation-layout.js";
 import { cartridge, forestJourney } from "./fixtures/pokemon-world.js";
 import { RED_BLUE_ITEMS, YELLOW_ITEMS } from "../src/profiles/pokemon/item-layout.js";
+import { preparationParty, preparationTables } from "./fixtures/pokemon-preparation.js";
 
 const variants = [
   { name: "Red", descriptor: POKEMON_RED_DESCRIPTOR, layout: POKEMON_RED_LAYOUT, create: createPokemonRedReader },
@@ -117,6 +118,137 @@ function navigationFixture(variant = variants[0]!, rom = new Uint8Array(7 * 0x40
 }
 
 for (const variant of variants) {
+  test(`${variant.name} offers capture from a city without balls and keeps the selected purpose through shopping to encounter tiles`, () => {
+    const world = cartridge(variant.name === "Yellow", [
+      { id: 2, warps: [[2, 2, 56, 0], [4, 2, 12, 0], [6, 2, 58, 0]] },
+      { id: 56, warps: [[3, 7, 255, 0]], objects: [{ picture: 38 }] },
+      { id: 12, tileset: 0, tile: (x) => x >= 4 ? 2 : 0, warps: [[3, 7, 2, 1]] },
+      { id: 58, warps: [[3, 7, 255, 2]], objects: [{ picture: 41 }] },
+    ]);
+    preparationTables(world.bytes, variant.name === "Yellow"); world.bytes[world.layout.tilesets + 10] = 2;
+    const { fixture, navigation, setTile } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length;
+    world.bytes.set([0, 2, 255], variant.name === "Yellow" ? 0x7000 : 0x3000);
+    preparationParty(fixture.ram, variant.layout); fixture.ram[variant.layout.partyCount] = 1;
+    fixture.ram[variant.layout.badges] = 1; fixture.ram.set([0, 0x17, 0x05], variant.layout.money);
+    const itemLayout = variant.name === "Yellow" ? YELLOW_ITEMS : RED_BLUE_ITEMS;
+    world.bytes.set([0, 2, 0], itemLayout.prices + 9);
+    for (const bit of [0, 34, 35, 57, 37]) fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+    fixture.ram[variant.layout.mapId] = 2; fixture.ram[navigation.warpCount] = 3;
+    fixture.ram.set([2, 2, 0, 56, 2, 4, 0, 12, 2, 6, 0, 58], navigation.warps);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    const catchAction = snapshot.actions.find(action => action.id === "focus_catch")!;
+    assert.ok(catchAction); assert.match(catchAction.description, /Priority: attempt every eligible wild species.*Only one.*No capture balls/);
+    assert.match(snapshot.actions.find(action => action.id === "focus_heal")!.description, /12\/47 \(26%\)/);
+    provider.createExecution!(catchAction).next(); snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "catch");
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Matches Jev's persistent catch focus/);
+    assert.match(snapshot.state.decisionSupport!.facts.join(" "), /capture purpose currently needs balls/);
+    fixture.ram[variant.layout.mapId] = 56; fixture.ram[navigation.lastMap] = 2;
+    fixture.ram[navigation.warpCount] = 1; fixture.ram.set([7, 3, 0, 255], navigation.warps);
+    fixture.ram[navigation.spriteCount] = 1; fixture.ram[0xc110] = 38;
+    fixture.ram[0xc215] = 4; fixture.ram[0xc214] = 9;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.match(snapshot.actions.find(action => action.id === "interact_object_1")!.description, /Matches Jev's persistent catch focus/);
+    fixture.ram[variant.layout.bagCount] = 1; fixture.ram.set([4, 3], variant.layout.bagItems);
+    snapshot = provider.read(fixture.captureFrame()); assert.equal(snapshot.state.values.currentFocus, "catch");
+    assert.doesNotMatch(snapshot.state.decisionSupport!.facts.join(" "), /capture purpose currently needs balls/);
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Matches Jev's persistent catch focus/);
+    fixture.ram[variant.layout.mapId] = 12; fixture.ram[navigation.lastMap] = 2; fixture.ram[navigation.tileset] = 0;
+    fixture.ram[navigation.spriteCount] = 0; fixture.ram[navigation.grass] = 2; fixture.ram.set([7, 3, 1, 2], navigation.warps);
+    // Make four nearby invented grass squares passable on both halves of each block.
+    const collision = variant.name === "Yellow" ? 0x7000 : 0x3000; world.bytes.set([0, 2, 255], collision);
+    for (let x = 4; x < 8; x++) { setTile(x, 5, 2); world.bytes[0x9000 + (2 * 4 + Math.floor(x / 2)) * 16 + 12 + (x & 1) * 2 + 1] = 2; }
+    provider.reset!(); snapshot = provider.read(fixture.captureFrame());
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_catch")!).next(); snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id.startsWith("walk_grass_")));
+    assert.match(snapshot.state.decisionSupport!.facts.join(" "), /Local land encounters.*SPROUT/);
+    assert.equal(fixture.inputs.length, 0, "Reading and choosing a purpose cannot send controller input.");
+    // Full parties, both regular combat and overworld fields must fit the shared observation contract.
+    fixture.ram[variant.layout.partyCount] = 6;
+    for (let slot = 1; slot <= 6; slot++) preparationParty(fixture.ram, variant.layout, slot);
+    validateGameState(provider.read(fixture.captureFrame()).state, fixture.frameNumber);
+    fixture.ram[variant.layout.battleKind] = 1; mon(fixture, variant.layout.battleMon, true); mon(fixture, variant.layout.enemyMon, true);
+    validateGameState(provider.read(fixture.captureFrame()).state, fixture.frameNumber);
+    assert.ok(provider.read(fixture.captureFrame()).actions.every(action => action.id !== "open_capture_bag"), "Intent does not bypass unverified capture menus.");
+  });
+
+  test(`${variant.name} keeps Jev's shop purpose inside the Mart and identifies a milestone trainer from the cartridge`, () => {
+    const world = cartridge(variant.name === "Yellow", [
+      { id: 2, warps: [[2, 2, 56, 0], [6, 2, 54, 0], [4, 2, 58, 0]] },
+      { id: 56, warps: [[3, 7, 255, 0]], objects: [{ picture: 38 }] },
+      { id: 54, warps: [[3, 7, 255, 1]], objects: [{ picture: 4, trainer: 201 }] },
+      { id: 58, warps: [[3, 7, 255, 2]], objects: [{ picture: 41 }] },
+    ]);
+    // Invented trainer-class ordering: the label must come from this table, not the class index.
+    let name = 14 * 0x4000 + (variant.name === "Yellow" ? 0x197e : 0x19ff);
+    for (let i = 0; i < 47; i++) { const text = [...textBytes(i === 0 ? "BROCK" : "SCOUT"), 0x50]; world.bytes.set(text, name); name += text.length; }
+    const { fixture, navigation } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length;
+    fixture.ram[variant.layout.partyCount] = 1; mon(fixture, variant.layout.partyMons);
+    for (const bit of [0, 34, 35, 57, 37]) fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+    fixture.ram[variant.layout.mapId] = 2;
+    fixture.ram[navigation.warpCount] = 3; fixture.ram.set([2, 2, 0, 56, 2, 6, 0, 54, 2, 4, 0, 58], navigation.warps);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === "focus_shop"));
+    assert.ok(snapshot.actions.every(action => action.id.startsWith("focus_") || action.stop));
+    const before = fixture.saveState();
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_shop")!).next();
+    assert.deepEqual(fixture.saveState(), before); // Purpose choice never sends controller input.
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "shop");
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Matches Jev's persistent shop focus/);
+    const previousKey = snapshot.actions.find(action => action.id === "press_down")!.availabilityKey;
+    fixture.ram[variant.layout.mapId] = 56; fixture.ram[navigation.lastMap] = 2;
+    fixture.ram[navigation.warpCount] = 1; fixture.ram.set([7, 3, 0, 255], navigation.warps);
+    fixture.ram[navigation.spriteCount] = 1; fixture.ram[0xc110] = 38;
+    fixture.ram[0xc215] = 4; fixture.ram[0xc214] = 9;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "shop");
+    assert.match(snapshot.actions.find(action => action.id === "interact_object_1")!.description, /Shop clerk.*Matches Jev's persistent shop focus/);
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_1")!.description, /Does not establish progress.*Leaves the focus destination/);
+    assert.ok(snapshot.actions.some(action => action.id === "press_down")); // A legitimate return stays legal.
+    provider.createExecution!(snapshot.actions.find(action => action.id === "reconsider_focus")!).next();
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.every(action => action.id.startsWith("focus_") || action.stop));
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_progress")!).next();
+    fixture.ram[variant.layout.mapId] = 54; fixture.ram[0xc110] = 4;
+    fixture.ram[0xc215] = 8; fixture.ram[0xc214] = 5;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "progress");
+    assert.match(snapshot.actions.find(action => action.id === "interact_object_1")!.description, /Trainer BROCK.*Matches Jev's persistent progress focus.*interaction relates/);
+    assert.notEqual(snapshot.actions.find(action => action.id === "press_down")!.availabilityKey, previousKey);
+    const exit = snapshot.actions.find(action => action.id === "go_exit_1")!;
+    for (let i = 0; i < 6; i++) provider.onActionComplete!({ action: exit,
+      record: { actionId: exit.id, fromFrame: 0, toFrame: 604, observation: "fixture", interrupted: false, executionReason: "Map changed." },
+      before: snapshot.state, after: snapshot.state });
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "choose");
+    assert.match(snapshot.state.decisionSupport!.facts.join(" "), /Six completed actions/);
+    assert.match(snapshot.actions.find(action => action.id === "focus_progress")!.description, /Selected 1 time/);
+    provider.setObjectives!({ goal: "Inspect this town", constraints: ["Avoid battles"], milestones: [] });
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "choose");
+    assert.equal(snapshot.state.values.activeMilestone, undefined);
+    provider.reset!(); assert.equal(provider.read(fixture.captureFrame()).state.values.currentFocus, "choose");
+    fixture.ram[navigation.grass] = 0;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === "focus_train"));
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_train")!).next();
+    snapshot = provider.read(fixture.captureFrame());
+    const grass = snapshot.actions.filter(action => action.id.startsWith("walk_grass_"));
+    assert.ok(grass.length > 0 && grass.length <= 4);
+    assert.match(grass[0]!.description, /Matches Jev's persistent train focus/);
+    fixture.ram[variant.layout.partyCount] = 6;
+    for (let i = 0; i < 6; i++) mon(fixture, variant.layout.partyMons + i * 44);
+    validateGameState(provider.read(fixture.captureFrame()).state, fixture.frameNumber);
+    fixture.ram[variant.layout.battleKind] = 1;
+    validateGameState(provider.read(fixture.captureFrame()).state, fixture.frameNumber);
+    assert.equal(fixture.inputs.length, 0);
+  });
+
   test(`${variant.name} gives Jev regional gate guidance and retains return warnings across battle snapshots`, () => {
     const world = cartridge(variant.name === "Yellow", [
       ...forestJourney.slice(0, -1), { id: 2, warps: [[3, 2, 54, 0]], connections: [[1, 13, 0, 0]] },
@@ -444,6 +576,120 @@ test("connected edges use the live connection strip, and uninitialized collision
   assert.ok(snapshot.actions.some(action => action.id === "press_up"));
   assert.match(snapshot.state.decisionSupport!.facts.join("\n"), /collision table is unavailable/);
 });
+
+for (const variant of variants) {
+  test(`${variant.name} offers nearby verified loot before purpose selection and reviews healing after a battle in the same health band`, () => {
+    const world = cartridge(variant.name === "Yellow", [
+      { id: 2, warps: [[6, 2, 58, 0]], objects: [{ picture: 61, item: 21 }] },
+      { id: 58, warps: [[3, 7, 255, 0]], objects: [{ picture: 41 }] },
+    ]);
+    preparationTables(world.bytes, variant.name === "Yellow");
+    const { fixture, navigation, setTile } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length; fixture.ram[variant.layout.mapId] = 2;
+    fixture.ram.set([2, 6, 0, 58], navigation.warps); setTile(3, 5, 0);
+    preparationParty(fixture.ram, variant.layout, 1, 2, 24, 48); fixture.ram[variant.layout.partyCount] = 1;
+    for (const bit of [0, 34, 35, 57, 37]) fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+    fixture.ram[navigation.spriteCount] = 1; fixture.ram[0xc110] = 61; fixture.ram.set([9, 8], 0xc214);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === "focus_progress"));
+    const loot = snapshot.actions.find(action => action.id === "interact_object_1")!;
+    assert.ok(loot, "Nearby loot stays selectable while a purpose is being chosen.");
+    assert.match(loot.description, /Priority: collect this nearby verified item/);
+    assert.ok(snapshot.state.decisionSupport!.facts.slice(0, 8).some(fact => /Priority: nearby collectible/.test(fact)));
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_progress")!).next();
+    snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "progress");
+    assert.ok(snapshot.actions.some(action => action.id === "focus_heal"), "A direct Jev-selected healing switch remains available.");
+    assert.doesNotMatch(snapshot.actions.find(action => action.id === loot.id)!.description, /Does not establish progress/);
+    const exitBefore = snapshot.actions.find(action => action.id === "go_exit_1")!;
+    fixture.ram[0xc110] = 2;
+    const withoutPickup = provider.read(fixture.captureFrame());
+    assert.notEqual(withoutPickup.actions.find(action => action.id === exitBefore.id)!.availabilityKey, exitBefore.availabilityKey,
+      "A delayed route choice is refreshed when nearby pickup opportunities change.");
+    fixture.ram[0xc110] = 61;
+    fixture.ram[variant.layout.battleKind] = 2; provider.read(fixture.captureFrame());
+    fixture.ram[variant.layout.battleKind] = 0; snapshot = provider.read(fixture.captureFrame());
+    assert.equal(snapshot.state.values.currentFocus, "choose");
+    assert.match(snapshot.actions.find(action => action.id === "focus_heal")!.description, /50%/);
+    fixture.ram[variant.layout.bagCount] = 20;
+    fixture.ram.set(Array.from({ length: 20 }, (_, i) => [i + 1, 99]).flat(), variant.layout.bagItems);
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.actions.some(action => action.id === loot.id), "Full storage must not advertise this pickup as immediately collectible.");
+    fixture.ram.set(Array.from({ length: 20 }, (_, i) => [i + 2, 99]).flat(), variant.layout.bagItems);
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.actions.some(action => action.id === loot.id), "A 99-item existing stack cannot receive another pickup.");
+    fixture.ram[variant.layout.bagItems + 39] = 98; snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === loot.id), "An existing stack with room remains collectible in a full bag.");
+    fixture.ram[variant.layout.bagCount] = 0; fixture.ram[0xc110] = 2;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.state.decisionSupport!.facts.some(fact => /Priority: nearby collectible/.test(fact)));
+    fixture.ram[0xc110] = 61; fixture.ram.set([4, 11], 0xc214);
+    fixture.ram[variant.layout.mapX] = 0; fixture.ram[variant.layout.mapY] = 2;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === loot.id), "A reachable pickup at eight walking steps is nearby.");
+    fixture.ram[variant.layout.mapY] = 3; snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.actions.some(action => action.id === loot.id), "A nine-step pickup does not bypass the fresh purpose choice.");
+    fixture.ram[variant.layout.mapY] = 2; fixture.ram[variant.layout.bagCount] = 21;
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.state.decisionSupport!.facts.some(fact => /Priority: nearby collectible/.test(fact)), "Malformed inventory is not proof that a pickup is storable.");
+    assert.equal(fixture.inputs.length, 0, "Reads and focus selection never advance the emulator.");
+  });
+
+  test(`${variant.name} exposes explicit step-off choices for an automatic stair landing without selecting a recovery input`, () => {
+    const { fixture, navigation, setTile, rom } = navigationFixture(variant);
+    fixture.ram[variant.layout.mapX] = 7; fixture.ram[variant.layout.mapY] = 1; setTile(7, 1, 0x15);
+    rom.set([0, 0x15, 255], variant.name === "Yellow" ? 0x7000 : 0x3000);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    assert.ok(!snapshot.actions.some(action => action.id === "go_exit_1"), "The zero-distance automatic exit cannot be retriggered in place.");
+    const steps = snapshot.actions.filter(action => action.id.startsWith("step_off_exit_"));
+    assert.ok(steps.length > 0 && steps.length <= 4); validateAgentActions(snapshot.actions, fixture.descriptor.buttons);
+    assert.ok(!steps.some(action => action.id === "step_off_exit_right"), "A step outside the map is not a verified walking square.");
+    assert.match(snapshot.state.decisionSupport!.facts.join(" "), /Jev must first choose one available step_off_exit action/);
+    const selected = steps.find(action => action.id === "step_off_exit_left")!; assert.ok(selected);
+    const execution = provider.createExecution!(selected), first = execution.next();
+    assert.equal(first.done, false); if (!first.done) assert.deepEqual(first.buttons, ["LEFT"]);
+    assert.equal(fixture.inputs.length, 0, "Execution emits a step; only the runner advances frames.");
+    fixture.ram[variant.layout.mapX] = 6;
+    assert.equal(execution.next().done, true, "The selected adjacent square ends this action; it never walks back automatically.");
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === "go_exit_1"));
+    assert.ok(!snapshot.actions.some(action => action.id.startsWith("step_off_exit_")));
+    fixture.ram[variant.layout.mapX] = 7; rom.set([0, 0], navigation.warpTiles + 2); provider.reset!();
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id === "go_exit_1"), "Unknown warp mechanics retain bounded attempts.");
+    assert.ok(!snapshot.actions.some(action => action.id.startsWith("step_off_exit_")));
+  });
+  test(`${variant.name} does not prioritize returning through an arrival stair when another exit leads closer to healing`, () => {
+    const world = cartridge(variant.name === "Yellow", [
+      { id: 61, warps: [[3, 3, 60, 0]], tile: (x, y) => x === 3 && y === 3 ? 0x15 : 0 },
+      { id: 60, warps: [[3, 3, 61, 0], [6, 6, 58, 0]], tile: (x, y) => x === 3 && y === 3 ? 0x15 : 0 },
+      { id: 58, warps: [[3, 7, 255, 1]], objects: [{ picture: 41 }] },
+    ]);
+    preparationTables(world.bytes, variant.name === "Yellow");
+    const { fixture, navigation, setTile } = navigationFixture(variant, world.bytes);
+    fixture.rom.byteLength = world.bytes.length; setTile(3, 5, 0); setTile(3, 3, 0x15);
+    world.bytes.set([0, 0x15, 255], variant.name === "Yellow" ? 0x7000 : 0x3000);
+    fixture.ram[variant.layout.mapId] = 61; fixture.ram[variant.layout.mapX] = 3; fixture.ram[variant.layout.mapY] = 3;
+    fixture.ram.set([3, 3, 0, 60], navigation.warps);
+    preparationParty(fixture.ram, variant.layout); fixture.ram[variant.layout.partyCount] = 1;
+    for (const bit of [0, 34, 35, 57, 37]) fixture.ram[navigation.eventFlags + (bit >> 3)]! |= 1 << (bit & 7);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
+    let snapshot = provider.read(fixture.captureFrame());
+    provider.createExecution!(snapshot.actions.find(action => action.id === "focus_heal")!).next();
+    snapshot = provider.read(fixture.captureFrame());
+    assert.ok(snapshot.actions.some(action => action.id.startsWith("step_off_exit_") && /Matches Jev's persistent heal focus/.test(action.description)));
+    fixture.ram[variant.layout.mapId] = 60; fixture.ram[navigation.lastMap] = 61;
+    fixture.ram[navigation.warpCount] = 2; fixture.ram.set([3, 3, 0, 61, 6, 6, 0, 58], navigation.warps);
+    provider.read(fixture.captureFrame()); fixture.frameNumber += 60; snapshot = provider.read(fixture.captureFrame());
+    assert.match(snapshot.actions.find(action => action.id === "go_exit_2")!.description, /Matches Jev's persistent heal focus/);
+    const steps = snapshot.actions.filter(action => action.id.startsWith("step_off_exit_")); assert.ok(steps.length);
+    assert.ok(steps.every(action => !/Matches Jev's persistent heal focus/.test(action.description)));
+    assert.ok(steps.every(action => /compare other exits before returning/.test(action.description)));
+    assert.equal(snapshot.state.values.currentFocus, "heal", "Crossing a map never silently selects another purpose.");
+  });
+}
 
 test("edge exit facts cover every facing boundary while special warp rules remain unknown", () => {
   const { fixture, navigation, setTile, rom } = navigationFixture();

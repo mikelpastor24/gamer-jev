@@ -165,7 +165,22 @@ working [demo strategy](src/profiles/demo.ts). Simple layouts can use a
 See [Pokémon readers](docs/pokemon-readers.md) for the supported hashes,
 decoded fields, limits, and extending the shared Gen I reader to other revisions.
 They also expose named inventory, ordinary capture-ball counts, team-preparation
-facts and explicit capture/Mart item choices. Jev chooses a bag or ball slot;
+facts and explicit capture/Mart item choices. A profile-local preparation layer
+explains HP percentages, status, live party PP/max PP, the upcoming recognized
+leader's ROM-derived team and usable attack matchups. Jev can choose capture
+from a city without balls, buy supplies as part of that purpose, then follow
+walking-area guidance to known land encounters. Center healing still requires
+the selected nurse interaction and observed HP/status/PP recovery.
+After a battle, any member at 50% HP or less prompts healing reconsideration.
+Priority facts and action descriptions favor nearby verified pickups and every
+eligible wild species absent from the team, regardless of Pokedex ownership or
+shared types. Missing balls prioritize Mart supplies; urgent healing comes first.
+An immediate reader-owned decision task distinguishes the current battle from
+future preparation. Known exhausted stat effects and ordinary type immunity are
+withheld when another known usable move exists; Jev can select a move directly
+from FIGHT or attempt RUN in a normal wild battle. Long walking actions yield
+when a new verified pickup becomes nearby, so Jev can reconsider before passing it.
+Jev chooses a bag or ball slot;
 shop item selection leaves quantity and price confirmation to later decisions.
 Visible pickups are distinguished from starter sprites using cartridge object
 flags. Early supply-route facts can guide a detour to Viridian/Pewter Mart when
@@ -189,6 +204,13 @@ regions and exact door landing coordinates distinguish disconnected areas of
 the same map when describing travel toward the active recognized checkpoint.
 Repeated partial approaches retain failed-attempt evidence; bounded map-crossing
 memory warns about immediate return loops even after long battles.
+After receiving the Pokedex, Jev first chooses a persistent purpose such as
+story progress, shopping or healing. It survives map changes; relevant people
+and exits are labelled against it, and arrival is separate from performing the
+task. Six actions without a new best route distance require reconsideration;
+repeated attempt evidence survives that review. Jev still chooses every purpose
+and controller action. This reduces conflicting destination choices and does
+not guarantee that the model will never repeat an unhelpful choice.
 Surfing and special field mechanics remain partial; decoded routes do not prove
 quest progress or full-game competence.
 

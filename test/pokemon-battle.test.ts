@@ -10,7 +10,7 @@ import { createPokemonRedReader, POKEMON_RED_DESCRIPTOR, POKEMON_RED_LAYOUT } fr
 import { createPokemonBlueReader, POKEMON_BLUE_DESCRIPTOR, POKEMON_BLUE_LAYOUT } from "../src/profiles/pokemon/blue.js";
 import { createPokemonYellowReader, POKEMON_YELLOW_DESCRIPTOR, POKEMON_YELLOW_LAYOUT } from "../src/profiles/pokemon/yellow.js";
 import { RED_BLUE_BATTLE, YELLOW_BATTLE } from "../src/profiles/pokemon/battle-layout.js";
-import { pokemonMoveExecution, type PokemonMoveExecutionState } from "../src/profiles/pokemon/battle-execution.js";
+import { pokemonEscapeExecution, pokemonMoveExecution, type PokemonMoveExecutionState } from "../src/profiles/pokemon/battle-execution.js";
 import { createStateObserver } from "../src/observation/state.js";
 import { evaluationRequest } from "../src/jev/evaluation.js";
 import { AgentSession } from "../src/runner/agent-session.js";
@@ -34,6 +34,47 @@ const encode = (text: string) => Uint8Array.from([...text].map(character => {
   assert.notEqual(code, undefined, `Unsupported fixture character: ${character}`); return code!;
 }));
 const names = ["FIREROAR", "WATERJET", "SOFTVOICE", "ODDHIT"];
+
+test("move cursor pulses end at the selected slot even when each emulator frame repeats the direction", () => {
+  let state: PokemonMoveExecutionState = { context: "battle", menu: "moves", selectedSlot: 1, usableSlots: [1, 2, 3, 4] };
+  const execution = pokemonMoveExecution(3, () => state, 8), directions: string[] = [], confirmations: number[] = [];
+  for (let frame = 0; frame < 100; frame++) {
+    const step = execution.next(); if (step.done) break;
+    const button = step.buttons[0];
+    if (button === "DOWN") { directions.push(button); state = { ...state, selectedSlot: state.selectedSlot === 4 ? 1 : state.selectedSlot + 1 }; }
+    if (button === "A") confirmations.push(state.selectedSlot);
+  }
+  assert.deepEqual(directions, ["DOWN", "DOWN"]); assert.deepEqual(confirmations, [3]);
+});
+
+test("an escape action returns from moves and confirms RUN exactly once without retrying or substituting a move", () => {
+  let state: PokemonMoveExecutionState = { context: "wild", menu: "moves", selectedSlot: 2, usableSlots: [1, 2], commandX: 9, commandY: 14 };
+  const execution = pokemonEscapeExecution(() => state, 1), inputs: string[] = [];
+  for (let frame = 0; frame < 100; frame++) {
+    const step = execution.next(); if (step.done) break;
+    const button = step.buttons[0] ?? ""; if (button) inputs.push(button);
+    if (button === "B") state = { ...state, menu: "command" };
+    if (button === "RIGHT") state = { ...state, commandX: 15 };
+    if (button === "DOWN") state = { ...state, commandY: 16 };
+    if (button === "A") state = { ...state, menu: "other" };
+  }
+  assert.deepEqual(inputs, ["B", "RIGHT", "DOWN", "A"]);
+  state = { ...state, menu: "command" }; const cancelled = pokemonEscapeExecution(() => state, 1);
+  state = { ...state, context: "another-battle" };
+  const next = cancelled.next(); assert.equal(next.done, true);
+  if (next.done) assert.match(next.reason, /context changed/);
+});
+
+test("opening FIGHT settles locally within a ceiling and never repeats the confirmation when the menu fails to open", () => {
+  const state: PokemonMoveExecutionState = { context: "battle", menu: "command", selectedSlot: 0, usableSlots: [1], commandX: 9, commandY: 14 };
+  const execution = pokemonMoveExecution(1, () => state, 8); let confirmations = 0, finished = false;
+  for (let frame = 0; frame < 130; frame++) {
+    const step = execution.next();
+    if (step.done) { assert.match(step.reason, /FIGHT menu did not open/); finished = true; break; }
+    if (step.buttons.includes("A")) confirmations++;
+  }
+  assert.equal(confirmations, 1); assert.equal(finished, true);
+});
 
 /** Invented move names, records, pixels and RAM. No commercial assets or API access. */
 class BattleFixture implements Emulator, MemoryReader, RomReader {
@@ -134,6 +175,18 @@ class FaintingFixture extends BattleFixture {
   }
 }
 
+class PrintingFixture extends BattleFixture {
+  acknowledgments = 0;
+  constructor(variant = variants[0]!, readonly promptAt = 20) {
+    super(variant); this.dialogue(["Enemy TESTMON", "used TESTMOVE"], false);
+  }
+  override advance(action: EmulatorAction) {
+    this.inputs.push(structuredClone(action)); this.frameNumber += action.frames;
+    if (action.buttons.includes("A")) { this.acknowledgments++; this.ram.fill(0x7f, this.variant.layout.tileMap, this.variant.layout.tileMap + 360); }
+    else if (this.frameNumber >= this.promptAt && !this.acknowledgments) this.dialogue(["Enemy TESTMON", "used TESTMOVE!"]);
+  }
+}
+
 function snapshot(fixture: BattleFixture, reader = fixture.variant.create()): GameState {
   const value = { ...reader.readState(fixture), source: reader.descriptor.id, frame: fixture.frameNumber };
   validateGameState(value, fixture.frameNumber); return value;
@@ -141,6 +194,49 @@ function snapshot(fixture: BattleFixture, reader = fixture.variant.create()): Ga
 const buttons = controllerActions(GAME_BOY_DESCRIPTOR.buttons, 24);
 
 for (const variant of variants) {
+  test(`${variant.name} retains text settling and prompt identity while the active battle actor is initializing`, () => {
+    const fixture = new PrintingFixture(variant), reader = variant.create(); fixture.ram[variant.layout.battleMon + 14] = 0;
+    let state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, "text_pending");
+    assert.equal(reader.shouldWait(state, 0), true);
+    assert.ok(!reader.availableActions(state, buttons).some(action => action.execution));
+    fixture.ram.fill(0x7f, variant.layout.tileMap, variant.layout.tileMap + 360);
+    state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, "actors_pending");
+    assert.equal(reader.shouldWait(state, 0), true);
+    fixture.dialogue(["Enemy TESTMON", "entered battle!"]);
+    state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, "text_acknowledgment");
+    const before = reader.availableActions(state, buttons).find(action => action.id === "press_a")!;
+    fixture.dialogue(["Different message"]); state = snapshot(fixture, reader);
+    const after = reader.availableActions(state, buttons).find(action => action.id === "press_a")!;
+    assert.notEqual(before.availabilityKey, after.availabilityKey);
+    assert.match(state.decisionSupport!.decisionGoal!, /Actor data are still initializing/);
+  });
+
+  test(`${variant.name} settles ordinary battle text without model calls until Jev can select its acknowledgment`, async () => {
+    const fixture = new PrintingFixture(variant);
+    const provider = createDefaultGameReaderRegistry().createFor(fixture, 8)!;
+    let visionCalls = 0, decisions = 0;
+    const observer = withVision(createStateObserver(provider), { async observe() {
+      visionCalls++; assert.ok(fixture.frameNumber >= 20);
+      return { text: "Completed fixture message", model: "fixture", usage: { inputTokens: 0, outputTokens: 0 } };
+    } });
+    const session = new AgentSession(fixture, { mode: "mock", visionProvider: "mock", observer,
+      objectives: { goal: "Acknowledge the completed message", constraints: [], milestones: [] },
+      budget: new RequestBudget({ maxRequests: 1, timeoutMs: 1000, intervalMs: 0, retries: 0 }), actionFrames: 8, maxDecisions: 1, maxSeconds: 60,
+      decider: { async decide(context) {
+        decisions++; assert.equal(context.gameState!.values.battleMenu, "text_acknowledgment");
+        assert.deepEqual(context.actions.map(action => action.id), ["press_a", "press_b", "stop"]);
+        return { actionId: "press_a", confidence: 1, model: "fixture", probabilities: {}, usage: { inputTokens: 0, outputTokens: 0 } };
+      } },
+    });
+    try {
+      const initial = provider.read(fixture.captureFrame()); assert.equal(initial.state.values.battleMenu, "text_pending");
+      session.tick(10); session.tick(10); assert.equal(decisions, 0); assert.equal(visionCalls, 0);
+      assert.ok(fixture.inputs.every(input => input.buttons.length === 0));
+      await runAgentHeadless(fixture, session, new AbortController().signal);
+      assert.equal(decisions, 1); assert.equal(visionCalls, 1); assert.equal(fixture.acknowledgments, 1);
+    } finally { session.stop("Fixture finished."); fixture.dispose(); }
+  });
+
   test(`${variant.name} skips Jev and vision during fainting, then executes only one Jev-selected acknowledgment`, async () => {
     const fixture = new FaintingFixture(variant), contexts: DecisionContext[] = [];
     const provider = createDefaultGameReaderRegistry().createFor(fixture, 24)!;
@@ -284,6 +380,55 @@ for (const variant of variants) {
     assert.ok(reader.availableActions(snapshot(fixture, reader), buttons).some(action => action.id === "use_move_2"));
   });
 
+  test(`${variant.name} prevents exhausted stat effects and known ordinary immunity while preserving unknown and fallback attempts`, () => {
+    const fixture = new BattleFixture(variant), reader = variant.create();
+    fixture.ram.fill(7, variant.battle.playerStages, variant.battle.playerStages + 6);
+    fixture.ram.fill(7, variant.battle.enemyStages, variant.battle.enemyStages + 6); fixture.select(3);
+    let state = snapshot(fixture, reader), actions = reader.availableActions(state, buttons);
+    const previous = actions.find(action => action.id === "use_move_3")!;
+    assert.match(state.decisionSupport!.actionFacts.use_move_3!.join(" "), /Enemy Attack stage=\+0/);
+    fixture.ram[variant.battle.enemyStages] = 1; state = snapshot(fixture, reader); actions = reader.availableActions(state, buttons);
+    assert.match(String(state.values.battleMove3), /NO EFFECT.*minimum -6/);
+    assert.ok(!actions.some(action => ["use_move_3", "press_a"].includes(action.id)));
+    assert.ok(actions.some(action => action.id === "use_move_1")); assert.ok(actions.some(action => action.id === "press_b"));
+    assert.throws(() => reader.createExecution(fixture, previous), /no longer available/);
+    fixture.ram[variant.battle.enemyStages] = 0; state = snapshot(fixture, reader);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "use_move_3"), "Unknown stages never prove exhaustion.");
+    fixture.ram[variant.battle.enemyStages] = 1; fixture.ram[variant.layout.battleMon + 25] = 0;
+    fixture.ram[variant.layout.battleMon + 26] = 0; fixture.ram[variant.layout.battleMon + 28] = 0;
+    state = snapshot(fixture, reader); assert.ok(reader.availableActions(state, buttons).some(action => action.id === "use_move_3"), "With no decoded alternative, the failed move stays an explicit bounded attempt.");
+    fixture.ram[variant.layout.battleMon + 25] = 5; fixture.romBytes[variant.battle.moves + 3] = 0;
+    fixture.types(variant.layout.enemyMon, 8); reader.reset(); fixture.select(1); state = snapshot(fixture, reader);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "use_move_1"), "An immune move remains when every other usable move is known ineffective.");
+    fixture.ram[variant.layout.battleMon + 26] = 20; state = snapshot(fixture, reader);
+    assert.ok(!reader.availableActions(state, buttons).some(action => ["use_move_1", "press_a"].includes(action.id)));
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "use_move_2"));
+  });
+
+  test(`${variant.name} offers a chosen move from the verified command screen and executes only that slot after opening FIGHT`, () => {
+    const fixture = new BattleFixture(variant), reader = variant.create(), moveTiles = fixture.readMemory(variant.layout.tileMap, 360);
+    fixture.ram[variant.layout.battleKind] = 1; fixture.dialogue([], false);
+    const tiles = fixture.ram.subarray(variant.layout.tileMap, variant.layout.tileMap + 360);
+    tiles.set(encode("FIGHT"), 14 * 20 + 10); tiles.set(encode("ITEM"), 16 * 20 + 10);
+    tiles.set(encode("PKM"), 14 * 20 + 16); tiles.set(encode("RUN"), 16 * 20 + 16); tiles[14 * 20 + 9] = 0xed;
+    const state = snapshot(fixture, reader); assert.equal(state.values.battleMenu, "command");
+    const actions = reader.availableActions(state, buttons); validateAgentActions(actions, fixture.descriptor.buttons);
+    assert.ok(actions.some(action => action.id === "run_from_wild"));
+    assert.match(state.decisionSupport!.decisionGoal!, /Capture is currently unavailable/);
+    const chosen = actions.find(action => action.id === "use_move_2")!; assert.ok(chosen);
+    const execution = reader.createExecution(fixture, chosen);
+    assert.deepEqual(execution.next(), { done: false, buttons: ["A"] }, "Only FIGHT is opened; no attack has been confirmed yet.");
+    assert.equal(fixture.confirmations.length, 0);
+    fixture.ram.set(moveTiles, variant.layout.tileMap); fixture.select(1);
+    for (let frame = 0; frame < 100; frame++) {
+      const step = execution.next(); if (step.done) break;
+      fixture.advance({ buttons: step.buttons, frames: 1 });
+    }
+    assert.deepEqual(fixture.confirmations, [2]);
+    fixture.ram[variant.layout.battleKind] = 2;
+    assert.ok(!reader.availableActions(snapshot(fixture, reader), buttons).some(action => action.id === "run_from_wild"));
+  });
+
   test(`${variant.name} rejects stale/partial menus, unrelated move prompts, and unusual battle variants`, () => {
     const fixture = new BattleFixture(variant), reader = variant.create();
     fixture.ram[variant.battle.menuItem] = 0;
@@ -291,7 +436,9 @@ for (const variant of variants) {
     assert.equal(state.values.battleMenu, "moves_pending"); assert.equal(reader.shouldWait(state, 0), true);
     assert.deepEqual(reader.availableActions(state, buttons).map(action => action.id), ["wait", "stop"]);
     fixture.select(1); fixture.ram[variant.layout.tileMap + 13 * 20 + 6] = 0;
-    assert.ok(!reader.availableActions(snapshot(fixture, reader), buttons).some(action => action.execution));
+    state = snapshot(fixture, reader);
+    assert.equal(state.values.battleMenu, "moves_pending", "A partially printed verified move list settles instead of confirming its old highlight.");
+    assert.ok(!reader.availableActions(state, buttons).some(action => action.execution || action.id === "press_a"));
     fixture.ram[variant.layout.tileMap + 13 * 20 + 6] = encode("F")[0]!;
     fixture.ram[variant.battle.moveMenuType] = 1;
     assert.ok(!reader.availableActions(snapshot(fixture, reader), buttons).some(action => action.execution));

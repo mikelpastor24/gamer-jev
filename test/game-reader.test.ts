@@ -39,7 +39,7 @@ test("profile-owned decision support is bounded, copied, and preserved through o
     readState(memory) {
       assert.equal(memory.readRom!(0x134, 1)[0], 71);
       return { values: { phase: "running" }, descriptions: {},
-        decisionSupport: { facts, actionFacts: { press_right: ["Increase the offset."], press_left: ["Decrease it."] } } };
+        decisionSupport: { decisionGoal: "Increase the current offset before ending this fixture.", facts, actionFacts: { press_right: ["Increase the offset."], press_left: ["Decrease it."] } } };
     },
     availableActions(_state, actions) { return actions.filter(action => ["press_right", "wait", "stop"].includes(action.id)); },
   };
@@ -52,6 +52,7 @@ test("profile-owned decision support is bounded, copied, and preserved through o
     const observation = await withVision(createStateObserver(provider), createMockVisionProvider()).observe(
       emulator.captureFrame(), undefined, objectives, new AbortController().signal);
     assert.equal(observation.gameState!.decisionSupport!.facts[0], facts[0]);
+    assert.equal(observation.gameState!.decisionSupport!.decisionGoal, "Increase the current offset before ending this fixture.");
     const good = provider.read(emulator.captureFrame()).state;
     for (const support of [
       { facts: Array.from({ length: 33 }, () => "Too many"), actionFacts: {} },
@@ -59,6 +60,9 @@ test("profile-owned decision support is bounded, copied, and preserved through o
       { facts: [], actionFacts: { wait: Array.from({ length: 9 }, () => "Too many") } },
       { facts: [], actionFacts: { "invalid id": ["Invalid"] } },
       { facts: [], actionFacts: [] },
+      { decisionGoal: "", facts: [], actionFacts: {} },
+      { decisionGoal: "x".repeat(501), facts: [], actionFacts: {} },
+      { decisionGoal: 3, facts: [], actionFacts: {} },
     ]) assert.throws(() => validateGameState({ ...good, decisionSupport: support } as unknown as typeof good, 0), /decision support/);
     assert.equal(emulator.frameNumber, 0);
   } finally { emulator.dispose(); }

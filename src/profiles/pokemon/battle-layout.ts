@@ -14,12 +14,15 @@ export interface PokemonBattleLayout {
   readonly disabledMove: number;
   readonly playerPartyIndex: number;
   readonly enemyPartyIndex: number;
+  readonly playerStages: number;
+  readonly enemyStages: number;
 }
 
 const shared = {
   moves: 0x38000,
   menuY: 0xcc24, menuX: 0xcc25, menuItem: 0xcc26, menuMax: 0xcc28, watchedKeys: 0xcc29,
   swappingMove: 0xcc35, moveMenuType: 0xccdb, numMovesMinusOne: 0xcd6c, playerPartyIndex: 0xcc2f,
+  playerStages: 0xcd1a, enemyStages: 0xcd2e,
 };
 
 export const RED_BLUE_BATTLE: PokemonBattleLayout = Object.freeze({

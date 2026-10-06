@@ -72,6 +72,8 @@ records follow the workflows in the [README](../README.md).
 | `playerName`, `rivalName` | Terminated, decoded names after gameplay starts |
 | `mapId`, `playerX`, `playerY`, `mapWidth`, `mapHeight`, `facing`, `movementMode` | Location and movement state; map dimensions use movement squares |
 | `locationName`, `navigationStatus`, `movementInProgress`, `controlBusy`, `stepUP/DOWN/LEFT/RIGHT` | Known location names, live movement/control timing, and walking/turning/blocked/unknown evidence |
+| `currentFocus`, `focusStatus` | Jev's persistent purpose and whether a fresh purpose choice is required during settled exploration after receiving the Pokedex |
+| `partyHealth`, `preparationNeeds`, `upcomingChallenge` | Overworld preparation advice: per-member HP percentage, low attack PP/status, backup/supply needs, and the next recognized uncompleted leader's cartridge team |
 | `standingExit`, `exitTriggerInputs` | Warp underfoot and decoded outward inputs for facing-edge exits; an applicable step is marked `exit_trigger` |
 | `money`, `badgeCount`, `badges`, `pokedexOwned`, `pokedexSeen` | Packed-BCD money, badge flags, and 151-species bit counts |
 | `bagCount`, `bagItems`, `pokeBalls` | Occupied bag slots, internal item ID/quantity pairs and total ordinary capture balls; names and quantities appear in bounded decision facts |
@@ -97,9 +99,85 @@ heading and entry when its alphabet grid establishes the context. This is
 memory decoding, not OCR or a vision model. Battle graphics, some status and
 party screens, and other unboxed labels are not fully represented.
 
+Party move fields include ROM names, types, ordinary base power or status/special
+classification and current/max PP, including the Generation I PP Up bonus.
+Names are clipped to 12 characters to keep all four slots bounded. A zero status
+byte means `no status condition`; it does not mean HP and PP are full.
 Party and battle structures are different. During a fight, `battlePlayer`
 contains current HP and `battlePlayerMoves` contains current PP; the party copy
 can lag until the fight ends. Internal species IDs are **not Pokédex numbers**.
+
+### Preparation, healing and building a team
+
+[`PokemonPreparationSupport`](../src/profiles/pokemon/preparation-support.ts)
+is an adjunct to the memory reader, independent of Jev and vision. It adds reasons
+to purpose choices and bounded facts to observations. It prioritizes
+a Center at 50% HP or less for any member, for fainted/status-affected members, or when a known
+ordinary attack has at most a quarter of its maximum PP. A below-30% HP band,
+status or low-PP change prompts a fresh purpose choice; thresholds are advice,
+not restrictions on the user's objective or legal inputs. Full recovery requires
+known full HP, cleared status and full PP. Unknown data never prove recovery.
+
+A completed battle followed by a settled, valid injured party requests a fresh
+purpose choice, even if HP remains in the same band. A current healing purpose
+persists; other purposes also offer a direct `focus_heal` switch when a known
+Center route exists. Duplicate reads and transitional party data do not consume
+the post-battle review. Priority facts appear before general context and in action
+descriptions. Supplied constraints remain authoritative and Jev selects healing,
+destinations and the nurse interaction; no service is performed automatically.
+
+[`preparation-catalog.ts`](../src/profiles/pokemon/preparation-catalog.ts) reads
+fixed-width species names, national-dex mappings, base-stat types, trainer party
+records and land encounters from the supplied ROM using
+[`preparation-layout.ts`](../src/profiles/pokemon/preparation-layout.ts).
+Cache bounds are 190 species, 248 maps with ten encounter slots each, and
+16 trainer-party results with at most six members each. Reset/restore clears
+these decoded tables. [`move-catalog.ts`](../src/profiles/pokemon/move-catalog.ts)
+shares the existing bounded 165 moves and type chart with battle support.
+ROM assets/bytes are never sent to Jev or recorded.
+
+For an active recognized supplied gym milestone, preparation reports the
+uncompleted leader's actual cartridge team, levels/types and the best known
+usable ordinary attack type factor against each member. The first four Elite
+Four teams are also decoded when their recognized milestone map applies.
+The final Champion's starter-dependent team, custom objectives, enemy learned
+moves, full damage prediction and guaranteed readiness remain unknown.
+Status/special moves are excluded from ordinary damage comparisons. Suggestions
+of useful potential attack types require a known chart and party moves;
+species typing alone does not prove that a capture learns those attacks.
+
+Capture purpose is offered from cities when a known reachable encounter area,
+capacity and balls or affordable Mart supplies exist. With no balls, its first
+stage labels routes toward a Mart and its clerk. Item, quantity and price remain
+separate Jev choices. Inventory-only changes preserve this capture purpose and
+refresh stage distances; story/team/owned-Pokedex and urgent preparation changes
+still request reconsideration. With balls, candidate encounter maps favor species
+absent from the current team and use the same exact walking areas
+and landings. At most four coarse candidates and one distance table are used;
+grassless indoor encounters, Red/Blue versus Yellow half-block rules and water
+shores are distinguished. Ordinary routing excludes Safari and unverified Tower
+encounters. Repel, scripts, HM access and moving objects can still prevent a route
+or encounter. Jev chooses each destination, encounter square, target and ball.
+
+Each verified eligible wild species absent from the team receives an explicit
+capture priority, including species already owned in the Pokedex and species
+sharing the team's types. `open_capture_bag`, individual ball choices and usable
+attack actions explain that priority and the risk of knocking out the target.
+Duplicates remain legal capture choices. Unknown team identity never proves
+absence; trainer, ghost, fainting and capacity exclusions still apply. Missing
+balls prioritize affordable, storable Mart ball choices, with quantity and price
+confirmation left to separate decisions. An attempted throw never proves success.
+
+The reference project's [decision context](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/context.ts)
+and [overworld choices](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/overworld.ts)
+inspired this preparation vocabulary. This implementation keeps game knowledge
+inside the profile and does not sample substitute actions or restore checkpoints.
+Synthetic tests cover injury, PP Ups, recovery, unknown data, exact cartridge
+layouts, capture prerequisites, purpose persistence and disconnected encounter
+areas. Read-only metadata checks verified leader/encounter tables for the three
+local cartridges. An isolated Red checkpoint replay restored HP and all four
+move PP at the Pewter Center with fixture choices, no API calls and no save writes.
+These checks do not establish live Jev healing/capture strategy or full-game competence.
 
 ### Battle move choices and types
 
@@ -118,7 +196,8 @@ type bytes count once. The cartridge table preserves Gen I behavior, including
 Ghost attacks doing no damage to Psychic and Poison/Bug weaknesses; modern
 type charts are not substituted. Unknown/invalid metadata stays unknown.
 
-These factors are not predicted final damage. Stats, stages, critical hits,
+These factors are not predicted final damage. Stat stages are decoded separately;
+stats, critical hits,
 burn, screens, random damage and detailed effects are not modeled. Base accuracy
 is the approximate ROM threshold, not current hit probability. Status moves
 include effect hints where decoded, with damage effectiveness marked `n/a`;
@@ -127,6 +206,18 @@ against Ghost. Fixed damage, OHKO, copied/random moves and other special rules
 are identified separately, without applying ordinary STAB/type factors as a
 damage estimate. This information supports decisions without guaranteeing the
 best move.
+
+[`battle-effects.ts`](../src/profiles/pokemon/battle-effects.ts) reads evidence
+for pure stat changes from the exact six live stage bytes per actor. RAM values
+1-13 mean stages -6 to +6; invalid values stay unknown. It explains that Attack
+and Defense affect physical moves, while Generation I Special affects both
+special offense and defense. A pure boost at +6 or reduction at -6 cannot apply
+again. Known Splash, Dream Eater against a known awake target and ordinary
+damaging type immunity also receive explicit failure facts. If another known
+usable move exists, that failed slot and generic A on its highlight are withheld.
+With no decoded alternative, bounded attempts remain. Unknown effects and special
+damage rules do not inherit ordinary immunity exclusions. No alternate move is
+selected by the reader. This is not complete battle legality or damage prediction.
 
 When the normal move menu's RAM anchors, displayed names and cursor agree,
 the reader offers `use_move_1` through `use_move_4` for slots with PP that are
@@ -141,6 +232,44 @@ START and move-swapping SELECT inputs are excluded in this confirmed menu.
 Demonstration, Safari, move-learning/Mimic prompts and unknown screens retain
 their existing controller attempts. Party switching, items, and complete
 battle-command legality remain partial. Capture and Mart choices are described below.
+
+Known usable `use_move_N` choices are also offered at a verified normal FIGHT
+command screen. Their executor opens FIGHT, settles within 120 frames, validates
+the actual move list and executes only Jev's selected slot within its 600-frame
+ceiling. Normal living wild battles offer `run_from_wild`: it returns from a move
+list if necessary, selects RUN and confirms once, with no retry or substituted
+attack. Trainers, unusual battles and changed actor contexts do not acquire that
+action. An escape attempt is not evidence that escape succeeded.
+
+The reader supplies a bounded `decisionSupport.decisionGoal` for the current
+screen, which the shared Jev question considers before distant milestones.
+Without verified capture eligibility or balls, the current battle task is to
+resolve it with a usable damaging move or escape attempt; capture preparation is
+a later task. Capture candidates and attack warnings about avoiding a knockout
+are supplied only when capture is currently available. An eligible wild species
+absent from the team instead gets an immediate bag/ball task. Buy lists, quantity
+prompts and shop confirmations carry their own tasks without automatically
+buying anything. Selected healing/supply purposes persist through dialogue,
+while actor identity and observed recovery still need evidence.
+
+An isolated saved Red battle verified a fixture-selected attack from FIGHT
+consumed exactly one PP and reduced enemy HP. Another fixture replay reached
+the -6 Attack cap after six effective Growl uses and verified its exclusion.
+Both used zero API calls and preserved the original checkpoint. These are
+mechanical replay checks, not live Jev strategy validation.
+
+A separate copied Red checkpoint replay bought one ball at Viridian Mart,
+entered Route 1 under a fixture-selected capture purpose and executed one
+selected ball throw, observing its inventory consumption. The target was not
+captured. It used zero API requests and preserved the original save; it verifies
+purchase/throw mechanics and task continuity, not Jev strategy or capture success.
+
+Text, menu and naming A/B confirmations use one frame so the backend's per-frame
+input events cannot close and immediately reopen a dialogue or confirm both
+quantity and price before another decision. Move, item and command cursor pulses
+end as soon as the selected slot/coordinate is observed, avoiding overshoot when
+each frame repeats a direction. Four runner release frames still follow actions;
+unknown controller attempts retain their bounded configured durations.
 
 Inspect these fields and choices through **Game state** or the dashboard's
 Jev request/response inspection, including when using direct TypeSafe without
@@ -178,6 +307,14 @@ chosen acknowledgment. An isolated Red checkpoint replay verified that
 A reaches the experience message, with no API requests or changes to the
 original checkpoint. This does not establish live Jev behavior or complete
 fainting/switching mechanics.
+
+Normal dialogue without a verified continuation/choice also uses `text_pending`;
+uninitialized actors with no visible choice use `actors_pending`. Both settle
+locally for at most 600 neutral frames, skipping Jev and vision, then preserve
+unknown controller attempts if no input marker arrives. Text readiness and
+private prompt identity survive an actor's initialization. Partially printed
+verified move lists settle before accepting a confirmation. Every completed
+continuation still needs a Jev-selected A/B; no text or answer is chosen locally.
 
 ### Capture, inventory and visible loot
 
@@ -232,8 +369,10 @@ identify directions that lead closer to Viridian/Pewter Mart using static
 walking areas and exact landing warps. These supply facts remain separate
 from the story milestone. They neither select a detour nor prove that a
 shop/script is currently accessible. Money, bag space and shop prerequisites
-still matter. Default constraints encourage useful captures, visible loot,
-healing and training before gyms; custom constraints remain authoritative.
+still matter. Default constraints prioritize healing at 50% HP or less after
+battles, nearby verified loot, and eligible wild species absent from the team;
+custom constraints remain authoritative. Reader facts supply these priorities
+even with existing objectives, without rewriting any user edits.
 Existing edited objectives are preserved. To adopt the new suggestions, use
 **Settings → Agent → Objectives → Use game defaults**, review and apply.
 
@@ -317,12 +456,25 @@ Special-map and tileset rules that use different warp checks remain unknown;
 scripts can still delay or reject a transition. Reaching an exit coordinate
 alone is not proof that the destination was reached.
 
+Standing on a verified automatic stair landing does not reactivate its warp.
+The ineffective zero-distance exit action is withheld there. Up to four explicit
+`step_off_exit_*` choices walk to a validated adjacent non-warp square and stop;
+Jev must select the original exit again to return. No executor chooses a recovery
+direction or walks back automatically. Return options match a persistent purpose
+only when the original stair's exact landing route is known to be closer;
+arrival stairs leading away are not marked as priority returns. Unknown and
+special warp mechanics retain bounded controller attempts. A copied Red
+Mt. Moon checkpoint stepped off and re-entered its selected stair into the prior
+floor with offline fixture decisions, no API calls and no save writes; the next
+onward healing exit was distinguished from returning to that arrival stair.
+
 A bounded breadth-first search supplies distances and all equally short first
 controller inputs to exits and interaction positions. Other warp squares are
 terminal to avoid claiming a path can walk through an exit without changing maps.
 Jev can choose a controller input or a semantic destination action. Up to 20
-destinations are offered, prioritizing candidates related to the active supplied
-milestone and then local distance: `go_exit_*`, `go_boundary_*`,
+destinations are offered, prioritizing nearby pickups, useful stair returns,
+the selected purpose, the active supplied milestone and then local distance:
+`go_exit_*`, `go_boundary_*`,
 `interact_object_*`, and `interact_sign_*`. A profile executor retains the chosen
 target, reads fresh routes, emits bounded movement pulses, waits for walking,
 faces an interaction target, and sends A once. It stops for dialogue, battle,
@@ -332,6 +484,23 @@ substitute a different destination or restore a checkpoint. Jev chooses again
 after interruption or completion. View this evidence in **Jev exchange → Input → Game facts &
 routes**, or in the complete Game state/API snapshot. Action descriptions also
 include concise facts; action records include `executionReason`.
+
+Verified live item balls at up to eight walking steps from an interaction square
+receive a pickup priority before routine travel, independently of story purpose.
+Urgent healing comes first. At most eight nearby pickup/stair actions stay
+selectable during a fresh purpose choice. Ordinary NPCs, starter balls,
+hidden/mismatched sprites, unknown inventory capacity and known full bags or
+99-item stacks do not receive a collectible priority. More distant pickups remain
+opportunities under normal navigation. Only observed inventory/object changes
+confirm collection. These bounded priorities do not guarantee that live Jev
+will follow them or complete a game.
+
+A long non-pickup navigation action stops when a new verified collectible enters
+that nearby range after walking settles, so Jev receives a fresh choice before
+the route passes it. The executor never picks the item or changes destinations.
+Items already nearby when Jev chose the route do not force repeated stops;
+another item also does not interrupt a selected pickup. Navigation keys include
+the nearby item set, refreshing a late response if those opportunities changed.
 
 [`map-graph.ts`](../src/profiles/pokemon/map-graph.ts) reads revision-specific
 map header, connection, and warp tables from the loaded ROM.
@@ -375,14 +544,69 @@ objective edits and reset/restore. Battle HP, PP, and level changes alone do not
 establish travel progress. Warnings stay bounded and retain all legal return
 choices, including useful healing or backtracking trips.
 
+[`focus.ts`](../src/profiles/pokemon/focus.ts) adds a separate purpose decision
+after the Pokedex is received and a party exists. In settled exploration with
+no current purpose, Jev chooses `focus_progress`, `focus_explore`, or a supported
+shopping, healing, training or capture purpose. These input-free profile actions
+store Jev's choice; they never choose a destination or send controller input.
+Map changes and incidental battles retain that purpose. `reconsider_focus`
+lets Jev explicitly request a new purpose. User objectives and constraints
+remain in every decision; a preparation purpose does not replace the story goal.
+
+Known Mart/Center maps use the same exact walking-area and landing geometry.
+At most four service candidates are considered per query, with at most eight
+candidate IDs retained for the current map and one retained distance table.
+
+The bounded service catalog is ranked by distance from the current exact walking
+area before keeping four candidates for each kind. Single-goal queries score
+the catalog and the final query uses at most four targets; only one distance
+table is retained. Moving to another walking area refreshes the shortlist, even
+within the same map. Four coarse nearby shops in disconnected areas must not
+hide a reachable fifth shop. Static access still does not verify current stock,
+shop prerequisites or scripts.
+Arriving at the destination is separate from completing its task: clerk/nurse
+interactions match the selected service purpose, while the exit back outside
+is labelled as leaving it. Trainer-class names come from bounded cartridge
+metadata (47 names, at most 24 bytes each) and matching live sprites. A trainer
+name in the recognized milestone can mark a relevant interaction, including
+Brock; this does not establish battle readiness, defeated status, or trainer
+identity for changed script contexts. Training/capture purposes can use regional
+land-encounter guidance as described above. Up to four local encounter-square
+targets are offered and only the selected square is walked to. Arrival does not
+guarantee an encounter or capture. Unavailable/special service scripts remain unknown.
+
+Purpose outcomes retain at most 64 map/action attempt counts, six historical
+best route distances, and six purpose selection counts. A new best distance
+can be useful navigation evidence; returning to a previously reached distance,
+crossing the same doorway again, or toggling menus is not a new best. After
+six completed actions without such improvement, settled exploration requires
+another Jev purpose choice; every purpose also receives a 32-action review.
+Repeated choices and their outcomes remain visible across these reviews. Reads
+do not consume either interval. Cancelled actions, purpose selections and battle
+actions do not increment navigation attempts. Training level gains count only
+for training; ordinary HP/PP/level changes do not prove story/navigation progress.
+Tracked story checks, badges, owned species, team changes, fainting and preparation
+health/PP bands invalidate focus. Bag changes refresh a selected capture purpose's
+stage; other purposes reconsider them. Observed known full HP/status/PP recovery
+reconsiders healing. Objective edits and
+reset/restore clear this session-local memory; checkpoints do not persist it.
+
 The reference project's [region graph](https://github.com/christianmat/jev-pokemon/blob/main/src/game/regions.ts)
 and [overworld decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/overworld.ts)
-inspired these original adaptations. It also asks Jev for a persistent focus
-such as progress or healing, tags repeated ineffective options, and sometimes
-samples an alternative after repeated failure. This project currently adds
-regional facts and crossing memory; it always executes Jev's selected action.
-Persistent Jev-selected focus, broader service routing, and dynamic regional
-refinements remain future work. Early capture-supply routes are described above.
+inspired these original adaptations, including persistent purpose and repeated
+attempt evidence. It also sometimes samples an alternative or restores a
+checkpoint after failure. This project executes only Jev's offered selection.
+Dynamic regional refinements and full-game competence remain future work;
+reconsideration cannot guarantee the model will never repeat an unhelpful choice.
+
+Synthetic tests cover purpose selection, map/battle persistence, retained best
+distances, repeat reviews, evidence invalidation, grass arrival and actual action
+feedback. Read-only checks on the three local cartridges verified Brock's
+decoded name and the Pewter service map headers. An isolated copy of the latest Red checkpoint reached the Pewter
+Mart's priced list with fixture choices and approached the selected Brock
+target until an intermediate trainer script opened dialogue. The original
+checkpoint was preserved and no APIs were used. This validates local options
+and mechanical execution, not live Jev strategy or completing either task.
 
 These are decoded mechanical facts, not universal legal-command guarantees.
 Unknown or uninitialized collision data preserves directional attempts. Surfing
@@ -481,7 +705,8 @@ owns English character codes, BCD, bit counts, and boxed text.
 `decision-support.ts` owns profile-specific facts and local navigation;
 `progress.ts` interprets supplied story checkpoints, `map-graph.ts` decodes map
 metadata, `region-graph.ts` supplies static regional distance facts,
-`travel-memory.ts` retains map crossings, and `navigation-execution.ts` retains
+`travel-memory.ts` retains map crossings, `focus.ts` retains Jev's purpose and
+bounded completed-action outcomes, and `navigation-execution.ts` retains
 a selected destination;
 `navigation-layout.ts` supplies verified RAM and ROM addresses for its mechanics.
 `battle-support.ts` decodes move/type facts and menu availability;
@@ -490,6 +715,10 @@ supplies exact cartridge and battle-menu addresses.
 `item-support.ts` supplies capture/inventory/Mart facts and choices;
 `item-catalog.ts` caches bounded decoded names/prices, `item-layout.ts` supplies
 revision addresses, and `item-execution.ts` follows only the selected menu target.
+`preparation-support.ts` supplies team/health/challenge advice and capture stages;
+`preparation-catalog.ts` and `preparation-layout.ts` decode revision-specific
+species, leader parties and encounters. `move-catalog.ts` shares move/type
+metadata with battle support; `encounter-tiles.ts` describes land encounter tiles.
 [`red.ts`](../src/profiles/pokemon/red.ts),
 [`blue.ts`](../src/profiles/pokemon/blue.ts), and
 [`yellow.ts`](../src/profiles/pokemon/yellow.ts) supply each exact revision.
