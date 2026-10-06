@@ -16,6 +16,11 @@ export interface PokemonBattleLayout {
   readonly enemyPartyIndex: number;
   readonly playerStages: number;
   readonly enemyStages: number;
+  readonly enemyUnmodifiedLevel: number;
+  readonly enemyUnmodifiedStats: number;
+  readonly enemyBattleStatus1: number;
+  readonly enemyBattleStatus2: number;
+  readonly enemyBattleStatus3: number;
 }
 
 const shared = {
@@ -23,11 +28,14 @@ const shared = {
   menuY: 0xcc24, menuX: 0xcc25, menuItem: 0xcc26, menuMax: 0xcc28, watchedKeys: 0xcc29,
   swappingMove: 0xcc35, moveMenuType: 0xccdb, numMovesMinusOne: 0xcd6c, playerPartyIndex: 0xcc2f,
   playerStages: 0xcd1a, enemyStages: 0xcd2e,
+  enemyUnmodifiedLevel: 0xcd23, enemyUnmodifiedStats: 0xcd24,
 };
 
 export const RED_BLUE_BATTLE: PokemonBattleLayout = Object.freeze({
   ...shared, moveNames: 0xb0000, typeEffects: 0x3e474, disabledMove: 0xd06d, enemyPartyIndex: 0xcfe8,
+  enemyBattleStatus1: 0xd067, enemyBattleStatus2: 0xd068, enemyBattleStatus3: 0xd069,
 });
 export const YELLOW_BATTLE: PokemonBattleLayout = Object.freeze({
   ...shared, moveNames: 0xbc000, typeEffects: 0x3e5fa, disabledMove: 0xd06c, enemyPartyIndex: 0xcfe7,
+  enemyBattleStatus1: 0xd066, enemyBattleStatus2: 0xd067, enemyBattleStatus3: 0xd068,
 });

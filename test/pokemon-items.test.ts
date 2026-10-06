@@ -131,6 +131,30 @@ function snapshot(fixture: ItemFixture, reader = fixture.variant.create()): Game
   const state = { ...reader.readState(fixture), source: reader.descriptor.id, frame: 0 };
   validateGameState(state, 0); return state;
 }
+
+function prepareCaptureFixture(fixture: ItemFixture): void {
+  const { mon, battle } = fixture.variant;
+  const put16 = (address: number, value: number) => fixture.ram.set([value >> 8, value & 255], address);
+  for (const address of [mon.battleMon, mon.enemyMon]) {
+    put16(address + 1, 100); put16(address + 15, 100);
+    fixture.ram[address + 14] = 10; fixture.ram[address + 5] = 0; fixture.ram[address + 6] = 0;
+    put16(address + 17, 40); put16(address + 19, 20); put16(address + 23, 20);
+  }
+  fixture.ram[mon.partyMons + 33] = 10; put16(mon.partyMons + 34, 100);
+  put16(mon.partyMons + 36, 40); put16(mon.partyMons + 42, 20);
+  fixture.ram[battle.enemyUnmodifiedLevel] = 10; put16(battle.enemyUnmodifiedStats, 100);
+  put16(battle.enemyUnmodifiedStats + 4, 20); put16(battle.enemyUnmodifiedStats + 8, 20);
+  fixture.ram.fill(7, battle.playerStages, battle.playerStages + 6);
+  fixture.ram.fill(7, battle.enemyStages, battle.enemyStages + 6);
+  fixture.ram.set([1, 2, 3, 4], mon.battleMon + 8); fixture.ram.set([20, 20, 20, 20], mon.battleMon + 25);
+  fixture.romBytes.fill(0x50, battle.moveNames, battle.moveNames + 4096);
+  fixture.romBytes.set([...["SOFTTAP", "HEAVYHIT", "SLEEPCALL", "ODDHIT"].flatMap(name => [...encode(name), 0x50])], battle.moveNames);
+  for (const [index, power, effect] of [[0, 20, 0], [1, 250, 0], [2, 0, 0x20], [3, 1, 0x29]]) {
+    fixture.romBytes.set([index! + 1, effect!, power!, 0, 255, 20], battle.moves + index! * 6);
+  }
+  fixture.romBytes.set([0, 5, 20, 0xff], battle.typeEffects);
+  fixture.bag([[4, 5]]); fixture.command();
+}
 function execute(fixture: ItemFixture, reader: ReturnType<typeof createPokemonRedReader>, id: string) {
   const actions = reader.availableActions(snapshot(fixture, reader), buttons); validateAgentActions(actions, GAME_BOY_DESCRIPTOR.buttons);
   const action = actions.find(action => action.id === id); assert.ok(action, "Expected " + id);
@@ -143,6 +167,99 @@ function execute(fixture: ItemFixture, reader: ReturnType<typeof createPokemonRe
 }
 
 for (const variant of variants) {
+  test(variant.name + " prepares a high-HP capture with cautious move evidence, then throws at the rounded ball plateau", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create(); prepareCaptureFixture(fixture);
+    const before = fixture.ram.slice();
+    let state = snapshot(fixture, reader), actions = reader.availableActions(state, buttons);
+    assert.match(state.decisionSupport!.decisionGoal!, /one cautious ordinary attack.*Choose a cautious use_move/);
+    assert.match(actions.find(action => action.id === "use_move_1")!.description, /^Priority:.*SOFTTAP/);
+    assert.match(state.decisionSupport!.actionFacts.use_move_2!.join(" "), /KO risk/);
+    assert.match(state.decisionSupport!.actionFacts.use_move_3!.join(" "), /no direct HP reduction/);
+    assert.match(state.decisionSupport!.actionFacts.use_move_4!.join(" "), /not estimated/);
+    assert.match(actions.find(action => action.id === "open_capture_bag")!.description, /weakening attack is recommended first/);
+    assert.deepEqual(fixture.ram, before, "Reading capture tasks and actions never changes RAM.");
+    fixture.list(); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /choose B to leave the bag/);
+    assert.match(state.decisionSupport!.actionFacts.press_b!.join(" "), /cautious weakening/);
+    assert.ok(reader.availableActions(state, buttons).some(action => action.id === "throw_ball_slot_1"), "An early throw remains Jev's legal choice.");
+    fixture.ram[variant.mon.enemyMon + 2] = 35; fixture.command(); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /maximum HP benefit.*Choose open_capture_bag/);
+    assert.ok(!state.decisionSupport!.actionFacts.use_move_1!.some(note => /^Priority:/.test(note)));
+    fixture.list(); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /select one available throw_ball_slot/);
+    const ball = reader.availableActions(state, buttons).find(action => action.id === "throw_ball_slot_1")!;
+    assert.match(ball.description, /capture estimate.*HP benefit already maximized/);
+    validateAgentActions(reader.availableActions(state, buttons), GAME_BOY_DESCRIPTOR.buttons);
+    assert.equal(fixture.inputs.length, 0);
+  });
+
+  test(variant.name + " stops weakening for Great Ball plateaus and risky, disabled, depleted or unknown attacks", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create(); prepareCaptureFixture(fixture);
+    fixture.bag([[3, 2]]); fixture.ram[variant.mon.enemyMon + 2] = 51;
+    let state = snapshot(fixture, reader); assert.match(state.decisionSupport!.decisionGoal!, /maximum HP benefit/);
+    fixture.bag([[4, 2]]); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /Choose a cautious use_move/);
+    fixture.ram[variant.mon.enemyMon + 2] = 40;
+    fixture.ram[variant.mon.battleMon + 25] = 0; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /No cautious ordinary attack.*Choose open_capture_bag/);
+    fixture.ram[variant.mon.battleMon + 25] = 20; fixture.ram[variant.battle.disabledMove] = 0x12;
+    state = snapshot(fixture, reader); assert.match(state.decisionSupport!.decisionGoal!, /No cautious ordinary attack/);
+    fixture.ram[variant.battle.disabledMove] = 0; fixture.ram[variant.battle.enemyUnmodifiedStats + 4] = 0;
+    fixture.ram[variant.battle.enemyUnmodifiedStats + 5] = 0; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /No cautious ordinary attack/);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /critical upper estimate unknown/);
+    fixture.ram[variant.mon.battleKind] = 2; state = snapshot(fixture, reader);
+    assert.doesNotMatch(state.decisionSupport!.facts.join(" "), /Capture preparation: enemy HP/);
+  });
+
+  test(variant.name + " avoids additional capture turns during residual damage and refreshes late move meanings", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create(); prepareCaptureFixture(fixture);
+    let state = snapshot(fixture, reader);
+    const old = reader.availableActions(state, buttons).find(action => action.id === "use_move_1")!;
+    fixture.ram[variant.battle.enemyBattleStatus3] = 4; state = snapshot(fixture, reader);
+    assert.notEqual(reader.availableActions(state, buttons).find(action => action.id === old.id)!.availabilityKey, old.availabilityKey);
+    fixture.ram[variant.mon.enemyMon + 4] = 8; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /Residual damage.*Choose open_capture_bag/);
+    fixture.ram[variant.mon.enemyMon + 4] = 0; fixture.ram[variant.mon.battleMon + 2] = 30; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /30% HP or less.*Choose open_capture_bag/);
+    fixture.ram[variant.mon.battleMon + 2] = 100; fixture.bag([]); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /Capture is currently unavailable/);
+    assert.doesNotMatch(state.decisionSupport!.facts.join(" "), /Capture preparation: enemy HP/);
+  });
+
+  test(variant.name + " capture risk uses live modified stats once and unmodified critical stats", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create(); prepareCaptureFixture(fixture);
+    let state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 5-9 HP; critical upper estimate 15 HP/);
+    fixture.ram[variant.mon.battleMon + 18] = 5; fixture.ram[variant.battle.playerStages] = 1;
+    state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 1-3 HP; critical upper estimate 15 HP/);
+    fixture.ram[variant.mon.battleMon + 18] = 40; fixture.ram[variant.battle.playerStages] = 7;
+    fixture.ram[variant.battle.enemyBattleStatus3] = 4; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 3-6 HP; critical upper estimate 15 HP/);
+    fixture.ram[variant.mon.enemyMon + 2] = 15; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /KO risk/);
+    fixture.ram[variant.mon.enemyMon + 2] = 100;
+    fixture.ram[variant.mon.partyMons] = 177; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /No cautious ordinary attack/);
+  });
+
+  test(variant.name + " capture preparation distinguishes physical and special moves, STAB, distinct types and unknown charts", () => {
+    const fixture = new ItemFixture(variant), reader = variant.create(); prepareCaptureFixture(fixture);
+    fixture.romBytes[variant.battle.moves + 3] = 20;
+    fixture.romBytes.set([20, 0, 20, 20, 5, 5, 0xff], variant.battle.typeEffects);
+    fixture.ram[variant.mon.enemyMon + 6] = 5;
+    let state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 1-4 HP; critical upper estimate 6 HP/);
+    fixture.ram[variant.mon.enemyMon + 6] = 0; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 4-8 HP; critical upper estimate 12 HP/);
+    fixture.ram[variant.mon.battleMon + 5] = 20; fixture.ram[variant.mon.battleMon + 6] = 20; state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /ordinary hit 8-12 HP; critical upper estimate 18 HP/);
+    fixture.romBytes.fill(0, variant.battle.typeEffects, variant.battle.typeEffects + 384); reader.reset(); state = snapshot(fixture, reader);
+    assert.match(state.decisionSupport!.decisionGoal!, /No cautious ordinary attack/);
+    assert.match(state.decisionSupport!.actionFacts.use_move_1!.join(" "), /type chart are invalid/);
+  });
+
   test(variant.name + " prioritizes an eligible species absent from the team independently of types and Pokedex ownership", () => {
     const fixture = new ItemFixture(variant), reader = variant.create();
     fixture.ram[variant.mon.enemyMon + 5] = 20; fixture.ram[variant.mon.enemyMon + 6] = 20;
@@ -306,6 +423,7 @@ test("a mock session passes capture facts to its decider and executes only the s
       const request = evaluationRequest(context, "jev-fixture");
       assert.match(request.state.gameState!.decisionSupport!.facts.join(" "), /Capture supplies: 7/);
       assert.match(request.questions.next_action.criteria.throw_ball_slot_3!, /BALLTHREE/);
+      assert.match(request.questions.next_action.criteria.throw_ball_slot_3!, /Gen I capture estimate/);
       assert.ok(context.actions.some(action => action.id === "throw_ball_slot_3"));
       return { actionId: "throw_ball_slot_3", confidence: 1, probabilities: {}, model: "offline-item-fixture", usage: { inputTokens: 0, outputTokens: 0 } };
     } },

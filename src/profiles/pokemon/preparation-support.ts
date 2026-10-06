@@ -170,7 +170,7 @@ export class PokemonPreparationSupport {
         const candidate = `Capture candidate: ${species.name}, Lv${enemy[14]}, HP=${hp}/${maxHP}; ${members.some(mon => mon.id === species.id) ? "species already in party" : "new party species"}; ${knownTypes ? `new team types=${typesText(species.types.filter(type => !teamTypes.includes(type))) || "none"}` : "team type coverage unknown"}. Avoid knocking out a desired capture: type factors do not predict remaining HP. A ball attempt is not success; inspect party/owned-Pokedex changes.`;
         facts.unshift(candidate);
         actionFacts.open_capture_bag = [candidate];
-        for (let slot = 1; slot <= 4; slot++) actionFacts[`use_move_${slot}`] = ["If you want this wild Pokemon, consider a capture before damaging it. Knocking it out prevents a capture; base power and type factors do not predict exact damage."];
+        for (let slot = 1; slot <= 4; slot++) actionFacts[`use_move_${slot}`] = ["If you want this wild Pokemon, inspect capture preparation and the selected move's HP/KO risk. Weaken once when cautious, then reassess; stop damaging at the ball's HP plateau or when another hit risks a KO. Base power/type factors alone do not predict exact damage."];
       }
     }
     this.notes.progress = `${this.needsHealing ? "Lower priority: heal before proceeding. " : ""}${this.needsBalls ? "Buy missing capture balls before more encounters. " : ""}Collect nearby verified items and attempt new team species before routine story travel. Respect supplied constraints.`;

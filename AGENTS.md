@@ -330,6 +330,28 @@ threw that selected ball on Route 1, with observed inventory consumption, zero
 API requests and unchanged original saves. The target was not captured. These
 fixture choices verify purchase/throw mechanics, not live Jev capture strategy.
 
+`PokemonCaptureSupport` is a read-only adjunct sharing the bounded move catalog.
+Eligible captures expose each available ball's rounded Gen I HP plateau and
+uniform-random per-throw estimate, never the raw catch-rate byte as a percentage.
+The plateau is near 33% for Poke/Ultra and 50% for Great, with earlier integer
+rounding and small-HP exceptions. Master Balls ignore HP and remain scarce.
+Known usable single-turn ordinary attacks supply approximate normal/critical HP
+risk from live modified stats, matching unmodified party/wild stats, Gen I type
+categories, STAB and distinct-type factors. Do not apply live stages/burn twice.
+Unknown stats/chart/actors and special, multi-hit, charging, trapping, recoil,
+self-KO/residual effects do not establish a cautious attack. Critical estimates
+bypass screens/stages and use doubled level; estimates omit intermediate type
+rounding and future enemy actions, so never promise safety or exact damage.
+The immediate task requests one cautious weakening choice and a fresh HP review,
+or a ball at a plateau/KO risk/unknown risk/urgent low HP/residual target risk.
+An early bag explains B returns before a separately selected move. Keep early
+throws and otherwise legal attacks; never automatically weaken, throw or retry.
+Relevant preparation/stat changes refresh action availability keys. Synthetic
+fixtures cover Red/Blue/Yellow. A read-only copied Red battle verified decoded
+Scratch HP-risk advice and a rounded 7/15 Poke Ball plateau using one hypothetical
+ball, with no inventory edits, frames, APIs or original save writes. This verifies
+metadata-backed advice, not capture success or live Jev strategy.
+
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
 manual-session records. Redact credentials, exclude raw provider response bodies,

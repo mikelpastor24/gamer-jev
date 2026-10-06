@@ -175,6 +175,12 @@ After a battle, any member at 50% HP or less prompts healing reconsideration.
 Priority facts and action descriptions favor nearby verified pickups and every
 eligible wild species absent from the team, regardless of Pokedex ownership or
 shared types. Missing balls prioritize Mart supplies; urgent healing comes first.
+Eligible captures first request one cautious weakening move when its ordinary
+and critical estimates leave the target alive, then reassess HP. Gen I HP benefit
+plateaus near 33% for Poke/Ultra Balls and 50% for Great Balls, with exact integer
+rounding. Jev switches to balls at a plateau or earlier when further damage risks
+a KO or cannot be estimated cautiously. The reader supplies per-ball capture
+estimates and per-move HP risk; each attack and throw still requires Jev's choice.
 An immediate reader-owned decision task distinguishes the current battle from
 future preparation. Known exhausted stat effects and ordinary type immunity are
 withheld when another known usable move exists; Jev can select a move directly

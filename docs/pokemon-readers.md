@@ -247,7 +247,8 @@ Without verified capture eligibility or balls, the current battle task is to
 resolve it with a usable damaging move or escape attempt; capture preparation is
 a later task. Capture candidates and attack warnings about avoiding a knockout
 are supplied only when capture is currently available. An eligible wild species
-absent from the team instead gets an immediate bag/ball task. Buy lists, quantity
+absent from the team instead gets a cautious weakening or bag/ball task based on
+live HP and attack risk. Buy lists, quantity
 prompts and shop confirmations carry their own tasks without automatically
 buying anything. Selected healing/supply purposes persist through dialogue,
 while actor identity and observed recovery still need evidence.
@@ -336,6 +337,46 @@ Safari, fainted/transitional and unverified ghost encounters have no ordinary
 capture actions. Full parties require space in the current PC box; a stored
 capture does not immediately join the party.
 
+[`PokemonCaptureSupport`](../src/profiles/pokemon/capture-support.ts) derives a
+fresh capture task from that eligibility, available balls and the active moves.
+In Gen I, the HP benefit saturates near one third for Poke/Ultra Balls and one
+half for Great Balls. It applies the game's integer rounding to find each ball's
+actual plateau, including small HP totals; it never insists on 25% or 1 HP.
+Ball descriptions expose approximate per-throw probability from live HP, status
+and the catch-rate threshold, conditional on an eligible normal encounter and
+uniform random values. These are not guarantees or the raw catch-rate byte
+expressed as a percentage. Great Balls can outperform Ultra Balls at high HP.
+Master Balls ignore HP but remain scarce, separately selected resources.
+
+Above those plateaus, known usable single-turn ordinary attacks can supply
+approximate HP damage and critical-hit upper estimates using current attack/
+defense or Gen I Special, STAB and the cartridge's distinct-type factors.
+Normal live stats already include stages/burn/badge effects; do not apply them
+twice. Critical estimates use matching unmodified party/wild stats and doubled
+level, bypassing screens and stat changes. Unknown stats/chart/actor identity,
+special damage, multi-hit, charging, trapping, recoil, self-KO and residual-damage
+effects do not establish a cautious attack. Estimates omit intermediate type
+rounding and future enemy actions and are not a guaranteed damage calculator.
+
+Jev is asked to choose one cautious weakening move and inspect fresh HP afterward.
+It is asked to throw when a ball's HP benefit is already maximized, another attack
+could KO, no cautious estimate is established, the active Pokemon is at 30% HP or
+less, or poison/burn/seed/confusion puts the target at risk. This can accept 30-40%
+or higher HP rather than lose a desired capture. Sleep/freeze improve captures
+more than other statuses; poison/burn add a risk of defeating the target.
+If the bag is opened while cautious weakening is still recommended, the task
+explains B returns to commands before Jev selects a move. Early throws and all
+otherwise legal moves remain available; no attack or throw is automatic. Live
+HP/stat/status and preparation-meaning changes invalidate delayed action choices.
+
+Synthetic fixtures cover all three readers: high HP, rounded plateaus, gentle
+versus KO-risk attacks, PP/Disable, normal versus critical stats, Special/STAB/
+distinct types, unknown data, status risk and bag tasks. A read-only copied Red
+battle produced Scratch HP-risk advice and a 7/15 Poke Ball plateau with one
+hypothetical ball supplied only to the advice helper. It used no inventory edits,
+emulator advancement, API calls or original save writes. This validates decoded
+advice, not a capture attempt or live Jev strategy.
+
 In a confirmed normal wild battle, `open_capture_bag` opens ITEM and stops.
 Jev then chooses `throw_ball_slot_N` from a verified bag menu. Each action
 uses exactly one selected Master/Ultra/Great/Poke Ball, with one confirmation
@@ -378,8 +419,11 @@ Existing edited objectives are preserved. To adopt the new suggestions, use
 
 The reference's [battle decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/battle.ts)
 and [overworld decisions](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/overworld.ts)
-informed this original implementation. Its estimated capture probabilities
-and persistent Jev-selected focus are not implemented here. These additions
+informed this original implementation. Capture estimates follow the verified
+[Red/Blue capture routine](https://github.com/pret/pokered/blob/master/engine/items/item_effects.asm#L170-L303)
+and [Yellow routine](https://github.com/pret/pokeyellow/blob/master/engine/items/item_effects.asm#L182-L316),
+with HP risk informed by the [Gen I damage routine](https://github.com/pret/pokered/blob/master/engine/battle/core.asm#L3921-L4032).
+Persistent focus remains independently selected by Jev. These additions
 make opportunities explicit; live Jev team-building competence is unverified.
 
 When the complete START menu is visible and POKEMON is selected with an empty
@@ -713,6 +757,8 @@ a selected destination;
 `battle-execution.ts` retains the selected attack slot, and `battle-layout.ts`
 supplies exact cartridge and battle-menu addresses.
 `item-support.ts` supplies capture/inventory/Mart facts and choices;
+`capture-support.ts` supplies rounded ball HP plateaus, capture estimates and
+bounded ordinary/critical attack-risk advice without selecting an input;
 `item-catalog.ts` caches bounded decoded names/prices, `item-layout.ts` supplies
 revision addresses, and `item-execution.ts` follows only the selected menu target.
 `preparation-support.ts` supplies team/health/challenge advice and capture stages;

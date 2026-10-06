@@ -119,7 +119,11 @@ export class PokemonBattleSupport {
     const command = /FIGHT/.test(String(state.screenTextBottom)) && /RUN/.test(String(state.screenTextBottom)) &&
       [14, 16].includes(Number(state.menuCursorY)) && [9, 15].includes(Number(state.menuCursorX));
     const menu = flow.menu ?? (ready ? "moves" : command && livingActors ? "command" : regular && visibleNames > 0 && livingActors ? "moves_pending" : "other");
-    const context = flow.context ?? createHash("sha256").update(Uint8Array.from([...player, ...enemy, ...playerStages, ...enemyStages, u8(this.monLayout.battleKind), disabled, u8(layout.playerPartyIndex), u8(layout.enemyPartyIndex)])).digest("hex").slice(0, 24);
+    const partySlot = u8(layout.playerPartyIndex);
+    const captureContext = [u8(layout.enemyBattleStatus1), u8(layout.enemyBattleStatus2), u8(layout.enemyBattleStatus3), u8(layout.enemyUnmodifiedLevel),
+      ...ram.subarray(layout.enemyUnmodifiedStats - 0xc000, layout.enemyUnmodifiedStats - 0xc000 + 10),
+      ...(partySlot < 6 ? ram.subarray(this.monLayout.partyMons - 0xc000 + partySlot * 44, this.monLayout.partyMons - 0xc000 + (partySlot + 1) * 44) : [])];
+    const context = flow.context ?? createHash("sha256").update(Uint8Array.from([...player, ...enemy, ...playerStages, ...enemyStages, ...captureContext, u8(this.monLayout.battleKind), disabled, partySlot, u8(layout.enemyPartyIndex)])).digest("hex").slice(0, 24);
     values.battleMenu = menu; values.battleMoveSelection = ready ? selected : 0;
     descriptions.battleMenu = "Verified moves/command menu, moves_pending or text_pending printing, actors_pending initialization, faint_pending neutral transition, text_acknowledgment requiring A/B, or other/unknown battle screen. Choices are never acknowledged automatically.";
     descriptions.battleMoveSelection = "Highlighted move slot, one based; zero when the cursor and RAM selection do not agree or another screen is visible.";
@@ -129,7 +133,7 @@ export class PokemonBattleSupport {
     this.snapshot = { menu, selectedSlot: ready ? selected : 0, context, usableSlots, moves: choices, stateKey: stateKey({ ...state, ...values }),
       commandX: Number(state.menuCursorX), commandY: Number(state.menuCursorY), wild: state.battleKind === "wild" && livingActors };
     facts.push("Move types and effectiveness use this cartridge's Generation I rules. Repeated A confirms the highlighted move; it does not choose a different attack. Consider damage, PP, status effects, and the user's constraints.");
-    facts.push("Base accuracy is an approximate ROM threshold, not current hit probability. Type effectiveness combines distinct enemy types; STAB applies once. Stats, stages, critical hits, burn, screens, random damage, and special effects are not estimated.");
+    facts.push("Base accuracy is an approximate ROM threshold, not current hit probability. Type effectiveness combines distinct enemy types; STAB applies once. Move summaries alone are not damage predictions. Eligible capture preparation may add approximate ordinary/critical HP risk; special effects and future enemy actions remain uncertain.");
     facts.push(pokemonStageSummary(playerStages, enemyStages));
     facts.push(`Battle types: active Pokemon ${knownPlayerTypes ? playerTypes.map(type => pokemonTypeNames[type]).join("/") : "unknown"}; enemy ${knownEnemyTypes ? enemyTypes.map(type => pokemonTypeNames[type]).join("/") : "unknown"}. Ordinary damaging moves use the enemy type factors and the active Pokemon's STAB. Status moves do no direct HP damage.`);
     for (const move of choices.filter(move => move.failure)) facts.unshift(`Priority: ${move.name} slot ${move.slot}: ${move.failure}${alternatives ? " Other usable moves exist, so this ineffective slot and generic A on it are withheld; Jev must choose another action." : " No other decoded effective move is available; bounded attempts remain, and no alternative is chosen automatically."}`);

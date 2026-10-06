@@ -80,7 +80,7 @@ export class GenerationOnePokemonReader implements GameReader {
     const readiness = preparation && moves && items ? new PokemonPreparationSupport(this.layout, new PokemonPreparationCatalog({ ...preparation }), moves, { ...items }) : undefined;
     this.support = new GenerationOneDecisionSupport(navigation, readiness);
     this.combat = battle && moves ? new PokemonBattleSupport({ ...battle }, this.layout, moves) : undefined;
-    this.resources = items && battle ? new PokemonItemSupport({ ...items }, this.layout, { ...battle }) : undefined;
+    this.resources = items && battle && moves ? new PokemonItemSupport({ ...items }, this.layout, { ...battle }, moves) : undefined;
     for (const address of Object.values(layout)) if (!Number.isSafeInteger(address) || address < 0xc000 || address > 0xdfff) {
       throw new Error("Generation I layout addresses must be in Game Boy work RAM.");
     }
