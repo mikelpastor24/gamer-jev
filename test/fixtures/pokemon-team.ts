@@ -101,7 +101,9 @@ export class PokemonTeamFixture {
   }
   party(kind = 2, selected = 0): void {
     const { mon, menu, items } = this.variant; this.mode = "party"; this.partyKind = kind;
-    this.tiles().fill(0x7f); this.box(0, 12, 19, 17); this.tiles().set(encodeTeamText("CHOOSE A MEMBER"), 13 * 20 + 1);
+    this.tiles().fill(0x7f); this.box(0, 12, 19, 17);
+    this.tiles().set(encodeTeamText(kind === 1 ? "Use item on which" : "CHOOSE A MEMBER"), 13 * 20 + 1);
+    if (kind === 1) this.tiles().set(encodeTeamText("POKéMON?"), 15 * 20 + 1);
     this.ram[items.menuType] = kind; this.ram[items.monDataLocation] = 0;
     this.ram[menu.menuY] = 1; this.ram[menu.menuX] = 0; this.ram[menu.menuItem] = selected;
     this.ram[menu.menuMax] = this.ram[mon.partyCount]! - 1; this.ram[menu.watchedKeys] = 3;
@@ -110,6 +112,10 @@ export class PokemonTeamFixture {
       this.tiles().set(bytes.subarray(0, bytes.indexOf(0x50)), slot * 2 * 20 + 3);
     }
     this.tiles()[(1 + selected * 2) * 20] = 0xed;
+    // Match the real party renderer's aliased RAM, not the previous bag's values.
+    this.ram[items.listId] = 2; this.ram[items.whichPokemon] = this.ram[mon.partyCount]! - 1;
+    this.ram[items.whichPokemon - 1] = this.ram[mon.partyMons + (this.ram[mon.partyCount]! - 1) * 44]!;
+    this.ram.fill(0, items.stringBuffer, items.stringBuffer + 13);
   }
   confirm(slot: number, selected = 0): void {
     const { menu, items } = this.variant; this.mode = "confirm"; this.tiles().fill(0x7f); this.box(11, 11, 19, 17);

@@ -102,7 +102,7 @@ export class GenerationOnePokemonReader implements GameReader {
       if (this.controlMap !== undefined && this.controlMap !== state.values.mapId) this.mapChangedAt = frame;
       this.controlMap = state.values.mapId;
     }
-    return state.values.phase === "naming" && this.naming !== undefined && !this.naming.executionState() || state.values.gameStarted === true && (state.values.phase === "transition" || ["moves_pending", "faint_pending", "text_pending", "actors_pending"].includes(String(state.values.battleMenu)) || this.resources?.pending(state) || state.values.movementInProgress === true || state.values.controlBusy === true ||
+    return state.values.phase === "naming" && this.naming !== undefined && !this.naming.executionState() || state.values.gameStarted === true && (state.values.phase === "transition" || ["moves_pending", "faint_pending", "text_pending", "actors_pending"].includes(String(state.values.battleMenu)) || this.resources?.pending(state) || this.party?.pending() || state.values.movementInProgress === true || state.values.controlBusy === true ||
       state.values.phase === "overworld" && frame - this.mapChangedAt < 60);
   }
   createExecution(memory: GameReaderMemory, action: AgentAction) {

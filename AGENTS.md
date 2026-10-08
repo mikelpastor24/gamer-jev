@@ -381,9 +381,17 @@ from Antidote and matches live battle HP/status to the active party slot.
 `choose_medicine_slot_N` selects a known useful medicine. Field USE is another
 Jev choice. A verified medicine party list offers beneficial
 `apply_medicine_to_slot_N` choices with one confirmation, no alternate target and
-a 600-frame ceiling. Verify the saved bag slot, stock, list pointer and item-name
-buffer: current-item RAM aliases species data during party drawing. Unknown
-medicine identity retains bounded attempts and explains cancellation. Poison/
+a 600-frame ceiling. Verify the saved bag cursor plus scroll, bounded inventory
+and terminator, stock, bag pointer, ordinary item context and live party rows.
+Party drawing reuses the list ID as HP-bar type 2, current-item RAM as species,
+and the string buffer as SGB packet data; never require their previous bag
+meaning or infer medicine from them. Recover the selected item from its verified
+saved bag row, including after restore into the selector, and expose partyMedicine.
+Known medicine drawing/printing exposes medicine_pending and requests at most
+600 neutral settling frames; the complete target prompt and live cursor/rows
+release settling. Jev separately selects the recipient; B cancels without healing,
+and no beneficial target calls for cancellation rather than ineffective treatment.
+Unknown medicine identity retains bounded attempts and explains cancellation. Poison/
 status or active HP <=30% can prioritize battle medicine; outside battle, status
 or HP <=50% prioritizes known beneficial inventory. Potions do not cure poison,
 Antidotes do not restore HP, and these medicines do not restore PP or revive.

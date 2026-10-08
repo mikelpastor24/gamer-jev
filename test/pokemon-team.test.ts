@@ -33,6 +33,20 @@ function execute(fixture: PokemonTeamFixture, reader: ReturnType<typeof teamVari
   assert.fail("Selected execution must stay bounded.");
 }
 
+function fixtureEmulator(fixture: PokemonTeamFixture): Emulator & MemoryReader & RomReader {
+  let frame = 0;
+  return {
+    descriptor: GAME_BOY_DESCRIPTOR,
+    rom: { sha256: fixture.variant.create().descriptor.romSha256[0]!, title: "Invented team menus", byteLength: fixture.romByteLength },
+    get frameNumber() { return frame; },
+    readMemory: fixture.readMemory.bind(fixture), readRom: fixture.readRom.bind(fixture),
+    captureFrame() { return { number: frame, width: 160, height: 144, format: "rgba8888", pixels: new Uint8Array(160 * 144 * 4) }; },
+    advance(action) { frame += action.frames; fixture.advance(action); },
+    saveState() { throw Error("Unexpected checkpoint write"); }, restoreState() { throw Error("Unexpected restore"); },
+    reset() { throw Error("Unexpected reset"); }, dispose() {},
+  };
+}
+
 for (const variant of teamVariants) {
   test(variant.name + " opens POKEMON without choosing a member or confirming SWITCH automatically", () => {
     const fixture = new PokemonTeamFixture(variant), reader = variant.create();
@@ -179,6 +193,116 @@ for (const variant of teamVariants) {
     assert.ok(current.actions.filter(action => action.id.startsWith("choose_shop_item_")).every(action => !action.description.startsWith("Priority: obtain")));
   });
 
+  test(variant.name + " identifies medicine after party drawing overwrites item, list and string aliases, including a restored selector", () => {
+    const fixture = new PokemonTeamFixture(variant), reader = variant.create();
+    fixture.ram[variant.mon.partyCount] = 6;
+    for (let slot = 1; slot < 6; slot++) {
+      fixture.ram.set(fixture.ram.slice(variant.mon.partyMons, variant.mon.partyMons + 44), variant.mon.partyMons + slot * 44);
+      fixture.ram.set([...encodeTeamText("TWIN"), 0x50], variant.mon.partyNicks + slot * 11);
+      fixture.hp(slot, 40);
+    }
+    fixture.ram[variant.mon.partyMons + 5 * 44] = 165;
+    fixture.be(variant.mon.partyMons + 34, 24); fixture.loadActive(0); fixture.hp(0, 7);
+    fixture.list(); execute(fixture, reader, "choose_medicine_slot_1");
+    assert.equal(fixture.ram[variant.items.listId], 2);
+    assert.equal(fixture.ram[variant.items.whichPokemon - 1], 165);
+    assert.equal(fixture.ram[variant.items.stringBuffer], 0);
+    const restoredReader = variant.create(), before = fixture.ram.slice(), current = snapshot(fixture, restoredReader);
+    assert.deepEqual(fixture.ram, before);
+    assert.match(current.state.values.partyMedicine as string, /SOOTHE; bag slot 1; quantity 3/);
+    assert.deepEqual(current.actions.filter(action => action.id.startsWith("apply_medicine")).map(action => action.id), ["apply_medicine_to_slot_1"]);
+    assert.match(current.state.decisionSupport!.decisionGoal!, /selected item is SOOTHE.*B cancels without healing/);
+    assert.equal(restoredReader.shouldWait(current.state, 0), false);
+    const key = current.actions.find(action => action.id === "apply_medicine_to_slot_1")!.availabilityKey;
+    fixture.ram[variant.items.whichPokemon - 1] = 20; fixture.ram[variant.items.stringBuffer] = 0xff;
+    assert.equal(snapshot(fixture, restoredReader).actions.find(action => action.id === "apply_medicine_to_slot_1")!.availabilityKey, key);
+    restoredReader.reset(); execute(fixture, restoredReader, "apply_medicine_to_slot_1");
+    assert.equal(fixture.ram[variant.mon.battleMon + 2], 24); assert.equal(fixture.ram[variant.mon.bagItems + 1], 2);
+    fixture.party(1); const healed = snapshot(fixture, restoredReader);
+    assert.ok(!healed.actions.some(action => action.id.startsWith("apply_medicine") || action.id === "press_a"));
+    assert.match(healed.state.decisionSupport!.decisionGoal!, /no verified beneficial target.*B cancels/);
+  });
+
+  test(variant.name + " keeps a scrolled medicine's saved bag slot and rejects changed stock, pointers or party-menu meaning", () => {
+    const setup = () => {
+      const fixture = new PokemonTeamFixture(variant), reader = variant.create();
+      fixture.hp(1, 40); fixture.bag([[4, 5], [1, 1], [2, 1], [3, 1], [20, 2], [11, 2]]); fixture.list(4);
+      execute(fixture, reader, "choose_medicine_slot_5");
+      return { fixture, reader };
+    };
+    const { fixture, reader } = setup();
+    assert.equal(fixture.ram[variant.items.scroll], 2); assert.equal(fixture.ram[variant.items.bagSaved], 2);
+    assert.match(snapshot(fixture, reader).state.values.partyMedicine as string, /SOOTHE; bag slot 5; quantity 2/);
+    execute(fixture, reader, "apply_medicine_to_slot_1"); assert.equal(fixture.ram[variant.mon.bagItems + 9], 1);
+    const changes = [
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.mon.bagItems + 9] = 0; },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.items.bagSaved] = 3; },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.items.scroll] = 20; },
+      (fixture: PokemonTeamFixture) => { fixture.ram.set([0, 0], variant.items.listPointer); },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.items.pseudoItem] = 1; },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.items.listId] = 3; },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.mon.bagItems + 12] = 0; },
+      (fixture: PokemonTeamFixture) => { fixture.ram[variant.mon.bagItems + 2] = 4; },
+    ];
+    for (const change of changes) {
+      const { fixture, reader } = setup(), chosen = snapshot(fixture, reader).actions.find(action => action.id === "apply_medicine_to_slot_1")!;
+      const execution = reader.createExecution(fixture, chosen); change(fixture);
+      const step = execution.next(); assert.equal(step.done, true);
+      assert.ok(!snapshot(fixture, reader).actions.some(action => action.id.startsWith("apply_medicine")));
+      assert.equal(fixture.confirmations, 1, "Context changes must not confirm treatment or choose another target.");
+    }
+  });
+
+  test(variant.name + " settles incomplete medicine rendering and prompt printing without answering a party choice", () => {
+    for (const field of [false, true]) {
+      const fixture = new PokemonTeamFixture(variant), reader = variant.create(); fixture.list();
+      execute(fixture, reader, "choose_medicine_slot_1");
+      if (field) fixture.ram[variant.mon.battleKind] = 0;
+      fixture.tiles().fill(0x7f, 15 * 20 + 1, 15 * 20 + 19);
+      const before = fixture.ram.slice(), current = snapshot(fixture, reader);
+      assert.equal(current.state.values.partyMenuKind, "medicine_pending");
+      assert.equal(reader.shouldWait(current.state, 0), true);
+      assert.ok(!current.actions.some(action => action.id.startsWith("apply_medicine")));
+      for (let read = 0; read < 10; read++) snapshot(fixture, reader);
+      assert.deepEqual(fixture.ram, before); assert.equal(fixture.confirmations, 1);
+      fixture.party(1); const ready = snapshot(fixture, reader);
+      assert.equal(ready.state.values.partyMenuKind, "medicine"); assert.equal(reader.shouldWait(ready.state, 0), false);
+      assert.ok(ready.actions.some(action => action.id === "apply_medicine_to_slot_1"));
+      if (!field) {
+        fixture.tiles().fill(0x7f); const blank = snapshot(fixture, reader);
+        assert.equal(blank.state.values.partyMenuKind, "medicine_pending"); assert.equal(reader.shouldWait(blank.state, 0), true);
+        fixture.command(); assert.equal(reader.shouldWait(snapshot(fixture, reader).state, 0), false);
+      }
+    }
+  });
+
+  test(variant.name + " an offline agent waits through delayed medicine drawing and selects the useful recipient in two decisions", async () => {
+    const fixture = new PokemonTeamFixture(variant); fixture.hp(1, 40); fixture.list();
+    const step = fixture.step.bind(fixture); let drawingFrames = 0, neutralFrames = 0;
+    fixture.step = (button: string) => {
+      if (drawingFrames) {
+        assert.equal(button, "", "Drawing settles without confirming or cancelling a recipient.");
+        neutralFrames++; if (!--drawingFrames) fixture.party(1); return;
+      }
+      const wasBag = fixture.mode === "bag"; step(button);
+      if (wasBag && button === "A" && fixture.mode === "party") { drawingFrames = 30; fixture.tiles().fill(0x7f); }
+    };
+    const emulator = fixtureEmulator(fixture), provider = createDefaultGameReaderRegistry().createFor(emulator, 24)!;
+    const choices: string[] = [], ids = ["choose_medicine_slot_1", "apply_medicine_to_slot_1"];
+    const session = new AgentSession(emulator, { mode: "mock", visionProvider: "none", observer: createStateObserver(provider),
+      objectives: { goal: "Heal the injured first party slot", constraints: [], milestones: [] }, actionFrames: 24,
+      maxDecisions: 2, maxSeconds: 60, budget: new RequestBudget({ maxRequests: 1, intervalMs: 0, retries: 0, timeoutMs: 1000 }),
+      decider: { async decide(context) {
+        const id = ids[choices.length]!; assert.ok(context.actions.some(action => action.id === id)); choices.push(id);
+        assert.notEqual(context.gameState!.values.partyMenuKind, "medicine_pending");
+        return { actionId: id, confidence: 1, probabilities: {}, model: "offline-healing-fixture", usage: { inputTokens: 0, outputTokens: 0 } };
+      } } });
+    await runAgentHeadless(emulator, session, new AbortController().signal, 1210);
+    assert.deepEqual(choices, ids); assert.equal(neutralFrames, 30);
+    assert.equal(fixture.ram[variant.mon.battleMon + 2], 30); assert.equal(fixture.ram[variant.mon.bagItems + 1], 2);
+    assert.equal(fixture.confirmations, 2); assert.equal(session.snapshot.requests, 0);
+  });
+
   test(variant.name + " preserves unknown medicine context and cancels changed-party execution without another target", () => {
     const fixture = new PokemonTeamFixture(variant), reader = variant.create(); fixture.list();
     execute(fixture, reader, "choose_medicine_slot_1");
@@ -187,7 +311,7 @@ for (const variant of teamVariants) {
     fixture.hp(1, 40); const next = execution.next(); assert.equal(next.done, true);
     if (next.done) assert.match(next.reason, /context changed/);
     assert.equal(fixture.confirmations, 1);
-    fixture.ram[variant.items.stringBuffer] = 0; const current = snapshot(fixture, reader);
+    fixture.ram.set([0, 0], variant.items.listPointer); const current = snapshot(fixture, reader);
     assert.ok(!current.actions.some(candidate => candidate.id.startsWith("apply_medicine_")));
     assert.match(current.state.decisionSupport!.decisionGoal!, /Item identity is unknown/);
     fixture.romBytes.fill(0, variant.items.names, variant.items.names + 4096); reader.reset();
@@ -281,17 +405,7 @@ test("typed Jev questions include slot identities and whole-name choices without
 test("an offline agent selects an Antidote, USE and the poisoned party slot separately, consuming exactly one item", async () => {
   const fixture = new PokemonTeamFixture(), { mon } = fixture.variant;
   fixture.ram[mon.battleKind] = 0; fixture.hp(1, 30, 8); fixture.list(1);
-  let frame = 0;
-  const emulator: Emulator & MemoryReader & RomReader = {
-    descriptor: GAME_BOY_DESCRIPTOR,
-    rom: { sha256: fixture.variant.create().descriptor.romSha256[0]!, title: "Invented team menus", byteLength: fixture.romByteLength },
-    get frameNumber() { return frame; },
-    readMemory: fixture.readMemory.bind(fixture), readRom: fixture.readRom.bind(fixture),
-    captureFrame() { return { number: frame, width: 160, height: 144, format: "rgba8888", pixels: new Uint8Array(160 * 144 * 4) }; },
-    advance(action) { frame += action.frames; fixture.advance(action); },
-    saveState() { throw Error("Unexpected checkpoint write"); }, restoreState() { throw Error("Unexpected restore"); },
-    reset() { throw Error("Unexpected reset"); }, dispose() {},
-  };
+  const emulator = fixtureEmulator(fixture);
   const provider = createDefaultGameReaderRegistry().createFor(emulator, 24)!;
   const chosen: string[] = [], ids = ["choose_medicine_slot_2", "press_a", "apply_medicine_to_slot_2"];
   const session = new AgentSession(emulator, { mode: "mock", visionProvider: "none", observer: createStateObserver(provider),

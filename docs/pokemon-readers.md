@@ -475,13 +475,34 @@ lagging party data for advice. Poison/status or 30%-or-less active HP can priori
 medicine in battle; outside battle, status or 50%-or-less HP prioritizes a useful
 medicine already held. Centers remain relevant for fuller recovery.
 
-Medicine targeting validates the saved bag slot, stock, item-list pointer and
-item-name buffer: `wCurItem` aliases species data while drawing the party and
-cannot alone identify the treatment. Unknown item identity retains bounded
+Medicine targeting validates the saved bag cursor plus scroll, complete bounded
+inventory, stock, item-list pointer, ordinary item context and live party rows.
+The party renderer reuses `wListMenuID` as HP-bar type 2, `wCurItem` as species,
+and `wStringBuffer` as SGB packet data. These fields cannot be interpreted as
+the previous bag's item ID/name or list ID. The verified saved bag row instead
+identifies the selected item, including when restoring directly into its party
+selector. `partyMedicine` exposes that item's name, bag slot and current quantity.
+Unknown item identity retains bounded
 controller attempts and a cancellation explanation. Every step stays within
 600 frames; changed inventory, party, HP/status or menu meaning ends execution
 or invalidates a delayed response. Verify inventory consumption and HP/status
 afterward; opening a menu or selecting an item is not healing.
+
+Known medicine selectors that are still drawing or printing expose
+`medicine_pending` and settle locally for at most 600 neutral frames. Complete
+party rows, cursor and the finished English target prompt release settling;
+Jev still chooses the recipient. Cancellation explicitly means no recovery,
+and a medicine without any beneficial recipient offers cancellation rather
+than another ineffective treatment. Pending rendering, aliases, changed stock
+or pointers, and scrolled bag selections are covered for Red, Blue and Yellow.
+
+The saved Red healing loop repeated bag selection and cancellation while the
+active Pokemon stayed at 7/24 HP. An isolated replay of that checkpoint selected
+its existing Potion and then party slot 1, observing 24/24 HP and one consumed
+Potion with two offline fixture choices, zero API requests and no writes to the
+original save. This verifies treatment mechanics and decoder advice, not live
+Jev adherence or general battle strategy. The reference project's battle-item
+flow likewise waits for the target selector and checks inventory consumption.
 
 Synthetic Red/Blue/Yellow checks cover duplicate names, configured names, cursor
 movement, forced/voluntary switching, fainting, stale responses, medicine effects,
@@ -914,6 +935,9 @@ English disassemblies:
 - [Yellow named event bits](https://github.com/pret/pokeyellow/blob/e89ead154b9968aa50eed9328ff2b38b6c194382/constants/event_constants.asm)
 - [Key item IDs](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/constants/item_constants.asm)
 - [Item list and quantity menus](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/home/list_menu.asm)
+- [Party input and aliased item/species fields](https://github.com/pret/pokered/blob/master/home/pokemon.asm)
+- [Party drawing and target prompts](https://github.com/pret/pokered/blob/master/engine/menus/party_menu.asm)
+- [Reference medicine targeting and consumption checks](https://github.com/christianmat/jev-pokemon/blob/main/src/agent/battle.ts)
 - [Mart selection and purchase confirmation](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/events/pokemart.asm)
 - [Capture restrictions and ball effects](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/engine/items/item_effects.asm)
 - [Move record properties](https://github.com/pret/pokered/blob/d2704a63c26f9ba046ade877445216b3de0519a4/data/moves/moves.asm)
