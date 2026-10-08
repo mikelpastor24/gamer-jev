@@ -466,6 +466,19 @@ the current game, invalidate reader caches, and retain the current paused cartri
 and both saves on restoration failure. Reloading the current ROM uses the current
 snapshot that is saved by the load, preserving unsaved progress. Library loads
 remain paused and never request model decisions during restoration.
+Settings → Session → Checkpoint offers optional autosave, off by default, with
+independent bounded intervals of 1–10,000 new Jev decisions (default 25) and
+1–86,400 active manual seconds (default 60). Defer a due agent save until its
+current input finishes; HTTP attempts and local settling are not decisions.
+Exclude paused manual time and keep time independent of emulation speed. Runtime
+updates validate the complete settings, revision, and game ID without pausing or
+cancelling model work. Keep settings across ROM/mode changes in the viewer run;
+reset scheduling on settings/mode/cartridge/save/reset/restore changes, and clear
+per-cartridge save status when switching. Keep one background write in flight;
+explicit checkpoint operations, ROM changes, and shutdown wait for it. Atomically
+replace a checkpoint using a complete sibling temporary file and clean failed
+temporary writes. Expose bounded failure messages without stopping gameplay or
+retrying every tick. Headless save behavior remains explicit.
 Guard browser commands and inspection against stale game IDs. Never expose
 ROM bytes, absolute catalog paths, or provider credentials through the library.
 

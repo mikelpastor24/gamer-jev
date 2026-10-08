@@ -1,4 +1,5 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import type { Emulator, Frame } from "../core/emulator.js";
@@ -26,7 +27,11 @@ export async function loadCheckpointIfPresent(emulator: Emulator, path: string):
 export async function saveStateFile(emulator: Emulator, path: string): Promise<void> {
   const data = JSON.stringify(emulator.saveState());
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, data);
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, data, { flag: "wx" });
+    await rename(temporaryPath, path);
+  } finally { await rm(temporaryPath, { force: true }); }
 }
 
 export function encodePng(frame: Frame): Buffer {

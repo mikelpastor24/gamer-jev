@@ -11,6 +11,8 @@ import { createEmulatorStateProvider } from "../observation/state.js";
 import { parseEmulationSpeed } from "../config/emulation.js";
 import { FrameClock } from "./frame-clock.js";
 import { LocalRomLibrary } from "./rom-library.js";
+import type { AutosaveSettings } from "../config/autosave.js";
+import { CheckpointAutosave } from "./checkpoint-autosave.js";
 
 export interface ViewerOptions {
   readonly port: number;
@@ -18,6 +20,7 @@ export interface ViewerOptions {
   readonly paused: boolean;
   readonly checkpointPath: string;
   readonly checkpointDirectory?: string;
+  readonly autosave?: AutosaveSettings;
   readonly agent?: AgentSession;
   readonly gameState?: GameStateProvider;
   readonly record?: (event: unknown) => void;
@@ -38,7 +41,8 @@ export interface Viewer {
 
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
   let speed = parseEmulationSpeed(options.speed);
-  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript, settingsHelpJavascript] = await Promise.all([
+  const autosave = new CheckpointAutosave(options.autosave);
+  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript, settingsHelpJavascript, autosaveJavascript] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
@@ -47,6 +51,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     readFile(new URL("../../web/agent-settings.js", import.meta.url)),
     readFile(new URL("../../web/rom-library.js", import.meta.url)),
     readFile(new URL("../../web/settings-help.js", import.meta.url)),
+    readFile(new URL("../../web/autosave.js", import.meta.url)),
   ]);
   let paused = options.paused;
   let buttons: string[] = [];
@@ -67,6 +72,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   let closing = false;
   let mutation: Promise<void> | undefined;
   if (paused) agent?.pause();
+  autosave.reset(agent?.snapshot.decisions ?? null);
 
   const discardAudio = () => { if (hasAudio(emulator)) emulator.drainAudio(); };
   const setSpeed = (value: unknown) => {
@@ -90,6 +96,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     gameReader: gameState.id,
     gameId,
     loadingRom,
+    autosave: autosave.status,
     romLibraryEnabled: options.loadRom !== undefined,
     playerConfigurable: game.player !== undefined,
     playerRevision: game.player?.configuration.revision ?? null,
@@ -101,7 +108,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   };
 
   const exclusive = async (operation: () => Promise<void>) => {
-    const pending = operation(); mutation = pending;
+    const pending = (async () => { await autosave.flush(); await operation(); })(); mutation = pending;
     try { await pending; } finally { if (mutation === pending) mutation = undefined; }
   };
   const loadRom = async (id: unknown) => {
@@ -133,6 +140,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       checkpointPath = nextCheckpointPath;
       clock = new FrameClock(emulator.descriptor.framesPerSecond);
       buttons = []; inputAt = 0; failure = null; gameId++; audioEpoch++; discardAudio();
+      autosave.reset(agent?.snapshot.decisions ?? null, performance.now(), true);
       previous.dispose();
     } finally { candidate?.dispose(); loadingRom = false; }
   };
@@ -166,6 +174,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         "/agent-settings.js": [agentSettingsJavascript, "text/javascript; charset=utf-8"],
         "/rom-library.js": [romLibraryJavascript, "text/javascript; charset=utf-8"],
         "/settings-help.js": [settingsHelpJavascript, "text/javascript; charset=utf-8"],
+        "/autosave.js": [autosaveJavascript, "text/javascript; charset=utf-8"],
       };
       if (assets[path]) {
         const [data, contentType] = assets[path];
@@ -241,6 +250,9 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       const data = body as Record<string, unknown>;
       if (Object.keys(data).some((key) => key !== "speed" && key !== "gameId")) throw new Error("Invalid emulation speed command.");
       setSpeed(data.speed);
+    } else if (path === "/api/autosave-settings") {
+      if (Object.keys(data).some((key) => !["settings", "revision", "gameId"].includes(key)) || data.gameId !== gameId) throw new Error("Invalid autosave settings command.");
+      autosave.configure(data.settings, data.revision, agent?.snapshot.decisions ?? null);
     } else if (path === "/api/player-settings") {
       if (!game.player) throw new Error("Player selection is unavailable in this viewer.");
       if (Object.keys(data).some((key) => !["selection", "settings", "revision", "gameId"].includes(key)) || data.gameId !== gameId) throw new Error("Invalid player settings command.");
@@ -250,6 +262,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       agent = game.agent; gameState = game.gameState; record = game.record;
       agent?.pause(); failure = null; clock.reset();
       if (JSON.stringify(previous) !== JSON.stringify(game.player.copySelection())) gameId++;
+      if (previous.mode !== game.player.copySelection().mode) autosave.reset(agent?.snapshot.decisions ?? null);
     } else if (path === "/api/agent-settings") {
       if (!agent) throw new Error("Agent settings are unavailable during manual play.");
       const data = body as Record<string, unknown>;
@@ -282,14 +295,17 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       if (game.player) game.player.clearHistory();
       else { agent?.clearHistory(); if (!agent) gameState.reset?.(); }
       failure = null;
+      autosave.reset(agent?.snapshot.decisions ?? null);
     } else if (path === "/api/save") {
       await exclusive(() => saveStateFile(emulator, checkpointPath));
+      autosave.reset(agent?.snapshot.decisions ?? null);
     } else if (path === "/api/load") {
       pause();
       await exclusive(() => loadStateFile(emulator, checkpointPath));
       if (game.player) game.player.clearHistory();
       else { agent?.clearHistory(); if (!agent) gameState.reset?.(); }
       failure = null;
+      autosave.reset(agent?.snapshot.decisions ?? null);
     } else {
       json(response, { error: "Not found." }, 404);
       return;
@@ -304,20 +320,23 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   const timer = setInterval(() => {
     const now = performance.now();
     if (agent?.terminal && !paused) { failure = agent.snapshot.state === "error" ? agent.snapshot.stopReason : null; pause(); }
-    if (paused) { clock.reset(now); return; }
-    if (now - inputAt > 500) buttons = [];
-    const frames = clock.dueFrames(now, speed);
-    if (frames < 1) return;
-    try {
-      if (agent) {
-        agent.tick(frames, true);
-      } else emulator.advance({ buttons, frames });
+    if (paused) clock.reset(now);
+    else {
+      if (now - inputAt > 500) buttons = [];
+      const frames = clock.dueFrames(now, speed);
+      if (frames > 0) {
+        try {
+          if (agent) agent.tick(frames, true);
+          else emulator.advance({ buttons, frames });
+        } catch (error) {
+          failure = error instanceof Error ? error.message : "Emulation failed.";
+          agent?.stop("Emulation failed.", true);
+          pause();
+        }
+      }
     }
-    catch (error) {
-      failure = error instanceof Error ? error.message : "Emulation failed.";
-      agent?.stop("Emulation failed.", true);
-      pause();
-    }
+    autosave.tick({ emulator, checkpointPath, decisions: agent?.snapshot.decisions ?? null, paused,
+      blocked: Boolean(closing || loadingRom || mutation || agent?.snapshot.state === "acting"), record }, now);
   }, 8);
 
   const address = server.address();
@@ -332,6 +351,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
       closing = true;
       pause();
       await mutation?.catch(() => {});
+      await autosave.flush();
       agent?.stop("Viewer closed.");
       await closeServer(server);
     },

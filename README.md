@@ -553,6 +553,23 @@ writes to the same path. Loading that ROM in the viewer, including at startup,
 automatically restores this latest checkpoint when it exists. **Restore checkpoint**
 also lets you return to the last save during play and pauses the session.
 
+Enable **Autosave** in **Settings → Session → Checkpoint**, set both intervals,
+and press **Apply**. It is off by default. Agent play saves after every 25 new
+Jev decisions by default, once the current input finishes; manual play saves
+after every 60 seconds of active play. Both intervals are editable: 1–10,000
+decisions and 1–86,400 seconds. Paused manual time does not count, and emulation
+speed does not change the time interval. Saving keeps emulation, audio, and
+pending model work running and makes no additional model requests.
+
+Autosave uses the current cartridge's checkpoint path. Settings carry across
+ROM and play-mode changes during this application run; restarting starts with
+autosave off. Applying autosave settings, switching modes or cartridges, manually
+saving, resetting, or restoring starts a new interval. The Settings panel shows
+the last automatic save and any error. Failed saves leave gameplay running and
+retry at the next interval. Writes replace the checkpoint only after a complete
+temporary file is ready, and checkpoint operations wait for any pending autosave.
+Autosave is a viewer feature; headless execution keeps its explicit save behavior.
+
 Choose your own checkpoint path; interactive startup automatically resumes it
 when present. An explicit `--load` takes precedence if supplied:
 
