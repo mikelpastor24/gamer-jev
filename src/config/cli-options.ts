@@ -152,7 +152,7 @@ export const CLI_HELP = `Usage: npm start
   --speed <factor>     Viewer speed, greater than 0 and at most 32 (default: 1)
   --paused             Start the viewer paused
   --debug              Print agent/reader diagnostics; record manual sessions too
-  --load <path>        Restore a compatible checkpoint before running
+  --load <path>        Restore this checkpoint instead of the viewer's latest save
   --save <path>        Checkpoint destination; saved at exit and from the viewer
   --screenshot <path>  Write the final headless frame as PNG
   --agent <provider>   typesafe for direct Jev, gateway for Vercel, or mock (omit for manual)
@@ -168,4 +168,7 @@ export const CLI_HELP = `Usage: npm start
   --unlimited         Disable agent ceilings and the default headless frame ceiling
   --action-frames <n>  Frames per chosen input, plus 4 release frames (default: 24)
   --help, -h           Show this help
+
+Viewer loads automatically resume the game's latest checkpoint when present.
+Headless runs resume only with --load.
 `;

@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Emulator } from "../core/emulator.js";
 import { hasAudio, validateAction } from "../core/emulator.js";
-import { encodePng, loadStateFile, saveStateFile } from "../emulator/files.js";
+import { defaultCheckpointPath, encodePng, loadCheckpointIfPresent, loadStateFile, saveStateFile } from "../emulator/files.js";
 import type { AgentSession } from "../runner/agent-session.js";
 import type { AgentSettings, GameStateProvider, PlayerSelection } from "../core/agent.js";
 import type { GameRuntime } from "../runner/game-runtime.js";
@@ -112,6 +111,15 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     try {
       candidate = await options.loadRom(await romLibrary.read(id), game.player?.copySettings() ?? agent?.copySettings(), game.player?.copySelection(), game.player?.copyObjectiveSource());
       candidate.agent?.pause();
+      const nextCheckpointPath = defaultCheckpointPath(candidate.emulator, options.checkpointDirectory);
+      if (candidate.emulator.descriptor.consoleId === emulator.descriptor.consoleId && candidate.emulator.rom.sha256 === emulator.rom.sha256) {
+        // Reloading the current ROM resumes the checkpoint about to be saved, including unsaved progress.
+        candidate.emulator.restoreState(emulator.saveState());
+      } else {
+        await loadCheckpointIfPresent(candidate.emulator, nextCheckpointPath);
+      }
+      if (candidate.player) candidate.player.clearHistory();
+      else { candidate.agent?.clearHistory(); if (!candidate.agent) candidate.gameState.reset?.(); }
       candidate.gameState.read(candidate.emulator.captureFrame());
       if (closing) throw new Error("The viewer is closing.");
       await saveStateFile(emulator, checkpointPath);
@@ -122,7 +130,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
         frame: previous.emulator.frameNumber });
       game = candidate; candidate = undefined;
       emulator = game.emulator; agent = game.agent; gameState = game.gameState; record = game.record;
-      checkpointPath = join(options.checkpointDirectory ?? "saves", emulator.descriptor.consoleId, emulator.rom.sha256, "checkpoint.json");
+      checkpointPath = nextCheckpointPath;
       clock = new FrameClock(emulator.descriptor.framesPerSecond);
       buttons = []; inputAt = 0; failure = null; gameId++; audioEpoch++; discardAudio();
       previous.dispose();

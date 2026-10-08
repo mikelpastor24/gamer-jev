@@ -6,7 +6,7 @@ import type { PokemonNavigationLayout } from "./navigation-layout.js";
 import { pokemonNavigationExecution } from "./navigation-execution.js";
 import type { PokemonBattleLayout } from "./battle-layout.js";
 import { PokemonBattleSupport } from "./battle-support.js";
-import { pokemonEscapeExecution, pokemonMoveExecution } from "./battle-execution.js";
+import { pokemonEscapeExecution, pokemonMoveExecution, pokemonPartyMenuExecution } from "./battle-execution.js";
 import { pokemonTypeNames } from "./types.js";
 import type { PokemonItemLayout } from "./item-layout.js";
 import { PokemonItemSupport } from "./item-support.js";
@@ -15,6 +15,9 @@ import type { PokemonPreparationLayout } from "./preparation-layout.js";
 import { PokemonPreparationCatalog } from "./preparation-catalog.js";
 import { PokemonPreparationSupport } from "./preparation-support.js";
 import { pokemonItemExecution } from "./item-execution.js";
+import { PokemonNamingSupport } from "./naming-support.js";
+import { pokemonNamingExecution } from "./naming-execution.js";
+import { PokemonPartySupport } from "./party-support.js";
 
 /** Addresses vary by engine, language, and revision. This contract is only for English Gen I. */
 export interface GenerationOneLayout {
@@ -69,6 +72,8 @@ export class GenerationOnePokemonReader implements GameReader {
   private readonly support: GenerationOneDecisionSupport;
   private readonly combat: PokemonBattleSupport | undefined;
   private readonly resources: PokemonItemSupport | undefined;
+  private readonly naming: PokemonNamingSupport | undefined;
+  private readonly party: PokemonPartySupport | undefined;
   private pulseFrames = 8;
   private controlMap: number | undefined;
   private mapChangedAt = -60;
@@ -81,24 +86,34 @@ export class GenerationOnePokemonReader implements GameReader {
     this.support = new GenerationOneDecisionSupport(navigation, readiness);
     this.combat = battle && moves ? new PokemonBattleSupport({ ...battle }, this.layout, moves) : undefined;
     this.resources = items && battle && moves ? new PokemonItemSupport({ ...items }, this.layout, { ...battle }, moves) : undefined;
+    this.naming = items && battle ? new PokemonNamingSupport(this.layout, { ...items }, { ...battle }) : undefined;
+    this.party = items && battle && this.resources ? new PokemonPartySupport(this.layout, { ...battle }, { ...items }, this.resources.catalog) : undefined;
+    if (defaultObjectives) this.naming?.setObjectives(defaultObjectives);
     for (const address of Object.values(layout)) if (!Number.isSafeInteger(address) || address < 0xc000 || address > 0xdfff) {
       throw new Error("Generation I layout addresses must be in Game Boy work RAM.");
     }
   }
 
-  reset(): void { this.support.reset(); this.combat?.reset(); this.resources?.reset(); this.controlMap = undefined; this.mapChangedAt = -60; }
-  setObjectives(objectives: Objectives): void { this.support.setObjectives(objectives); }
+  reset(): void { this.support.reset(); this.combat?.reset(); this.resources?.reset(); this.naming?.reset(); this.party?.reset(); this.controlMap = undefined; this.mapChangedAt = -60; }
+  setObjectives(objectives: Objectives): void { this.support.setObjectives(objectives); this.naming?.setObjectives(objectives); }
   onActionComplete(event: CompletedGameAction): void { this.support.onActionComplete(event); }
   shouldWait(state: GameStateData, frame: number): boolean {
     if (typeof state.values.mapId === "number" && state.values.gameStarted === true) {
       if (this.controlMap !== undefined && this.controlMap !== state.values.mapId) this.mapChangedAt = frame;
       this.controlMap = state.values.mapId;
     }
-    return state.values.gameStarted === true && (state.values.phase === "transition" || ["moves_pending", "faint_pending", "text_pending", "actors_pending"].includes(String(state.values.battleMenu)) || this.resources?.pending(state) || state.values.movementInProgress === true || state.values.controlBusy === true ||
+    return state.values.phase === "naming" && this.naming !== undefined && !this.naming.executionState() || state.values.gameStarted === true && (state.values.phase === "transition" || ["moves_pending", "faint_pending", "text_pending", "actors_pending"].includes(String(state.values.battleMenu)) || this.resources?.pending(state) || state.values.movementInProgress === true || state.values.controlBusy === true ||
       state.values.phase === "overworld" && frame - this.mapChangedAt < 60);
   }
   createExecution(memory: GameReaderMemory, action: AgentAction) {
     if (action.execution !== "profile") throw new Error("Only offered profile actions have local executors.");
+    const name = this.naming?.chosenName(action.id);
+    if (name) return pokemonNamingExecution(name, () => { this.readState(memory); return this.naming!.executionState(); });
+    const party = this.party?.execution(action.id, () => { this.readState(memory); });
+    if (party) return party;
+    if (action.id === "open_party_menu") return pokemonPartyMenuExecution(() => {
+      this.readState(memory); return { partyOpen: this.party?.battlePartyOpen() ?? false, battle: this.combat?.partyState() };
+    });
     if (action.id.startsWith("focus_") || action.id === "reconsider_focus") return this.support.focusExecution(action.id);
     const itemTarget = this.resources?.target(action.id);
     if (itemTarget) return pokemonItemExecution(itemTarget, () => {
@@ -143,16 +158,18 @@ export class GenerationOnePokemonReader implements GameReader {
       (_, slot) => byte(layout.bagItems + slot * 2 + 1) > 0 ? byte(layout.bagItems + slot * 2) : 0) : [];
     const add = (name: string, value: StateValue, description: string) => { values[name] = value; descriptions[name] = description; };
     const enriched = (): GameStateData => {
-      const combat = this.combat?.read(memory, ram, values);
-      const resources = this.resources?.read(memory, ram, { ...values, ...combat?.values });
-      const extra = this.support.read(memory, ram, { ...values, ...combat?.values, ...resources?.values }, inventory, this.resources?.catalog, this.resources?.captureAvailable);
+      const naming = this.naming?.read(ram, values);
+      const party = this.party?.read(memory, ram, { ...values, ...naming?.values });
+      const combat = this.combat?.read(memory, ram, { ...values, ...naming?.values, ...party?.values });
+      const resources = this.resources?.read(memory, ram, { ...values, ...naming?.values, ...party?.values, ...combat?.values });
+      const extra = this.support.read(memory, ram, { ...values, ...naming?.values, ...party?.values, ...combat?.values, ...resources?.values }, inventory, this.resources?.catalog, this.resources?.captureAvailable);
       const actionFacts: Record<string, readonly string[]> = {};
-      for (const source of [extra, combat, resources]) for (const [id, facts] of Object.entries(source?.decisionSupport?.actionFacts ?? {})) {
+      for (const source of [naming, party, resources, extra, combat]) for (const [id, facts] of Object.entries(source?.decisionSupport?.actionFacts ?? {})) {
         actionFacts[id] = [...(actionFacts[id] ?? []), ...facts].slice(0, 8);
       }
-      const facts = [...(extra.decisionSupport?.facts ?? []), ...(resources?.decisionSupport?.facts ?? []), ...(combat?.decisionSupport?.facts ?? [])];
-      const decisionGoal = resources?.decisionSupport?.decisionGoal ?? combat?.decisionSupport?.decisionGoal ?? extra.decisionSupport?.decisionGoal;
-      return { values: { ...values, ...extra.values, ...combat?.values, ...resources?.values }, descriptions: { ...descriptions, ...extra.descriptions, ...combat?.descriptions, ...resources?.descriptions },
+      const facts = [...(naming?.decisionSupport?.facts ?? []), ...(party?.decisionSupport?.facts ?? []), ...(extra.decisionSupport?.facts ?? []), ...(resources?.decisionSupport?.facts ?? []), ...(combat?.decisionSupport?.facts ?? [])];
+      const decisionGoal = naming?.decisionSupport?.decisionGoal ?? party?.decisionSupport?.decisionGoal ?? resources?.decisionSupport?.decisionGoal ?? combat?.decisionSupport?.decisionGoal ?? extra.decisionSupport?.decisionGoal;
+      return { values: { ...values, ...extra.values, ...combat?.values, ...resources?.values, ...naming?.values, ...party?.values }, descriptions: { ...descriptions, ...extra.descriptions, ...combat?.descriptions, ...resources?.descriptions, ...naming?.descriptions, ...party?.descriptions },
         decisionSupport: { facts: [...new Set([...facts.filter(fact => fact.startsWith("Priority:")), ...facts])].slice(0, 32),
           actionFacts, ...(decisionGoal ? { decisionGoal } : {}) } };
     };
@@ -225,9 +242,9 @@ export class GenerationOnePokemonReader implements GameReader {
   availableActions(state: GameState, actions: readonly AgentAction[]): readonly AgentAction[] {
     this.pulseFrames = Math.min(actions.find(action => action.id === "wait")?.frames ?? 8, 8);
     const emptyPartySelection = state.values.menuKind === "overworld" && state.values.menuSelection === "POKEMON" && state.values.partyCount === 0;
-    if (this.support.needsFocus(state)) return [...this.support.focusActions(state), ...this.support.priorityActions(state), ...actions.filter(action => action.stop)];
-    return [...this.support.focusActions(state), ...this.support.actions(state), ...(this.combat?.actions(state) ?? []), ...(this.resources?.actions(state) ?? []), ...actions.filter((action) => action.stop || action.id === "wait" && state.values.battleMenu !== "text_acknowledgment" || state.values.phase !== "transition" && action.buttons.length === 1 &&
-      !(emptyPartySelection && action.buttons[0] === "A") && (this.resources?.quantity(state) || this.support.allows(state, action.buttons[0]!)) && (this.combat?.allows(state, action.buttons[0]!) ?? true) && (this.resources?.allows(state, action.buttons[0]!) ?? true))
+    if (this.support.needsFocus(state)) return [...this.support.focusActions(state), ...(this.resources?.actions(state).filter(action => action.id === "open_medicine_bag") ?? []), ...this.support.priorityActions(state), ...actions.filter(action => action.stop)];
+    return [...(this.naming?.actions(state) ?? []), ...(this.party?.actions() ?? []), ...this.support.focusActions(state), ...this.support.actions(state), ...(this.combat?.actions(state) ?? []), ...(this.resources?.actions(state) ?? []), ...actions.filter((action) => action.stop || action.id === "wait" && state.values.battleMenu !== "text_acknowledgment" && state.values.partyMenuKind === undefined && !(state.values.phase === "naming" && this.naming?.executionState()) || state.values.phase !== "transition" && action.buttons.length === 1 &&
+      !(emptyPartySelection && action.buttons[0] === "A") && (this.resources?.quantity(state) || this.support.allows(state, action.buttons[0]!)) && (this.combat?.allows(state, action.buttons[0]!) ?? true) && (this.resources?.allows(state, action.buttons[0]!) ?? true) && (this.party?.allows(action.buttons[0]!) ?? true))
       .map((action) => {
         if (action.stop || action.id === "wait") return action;
         const button = action.buttons[0]!;
@@ -244,7 +261,7 @@ export class GenerationOnePokemonReader implements GameReader {
         const evidence = state.decisionSupport?.actionFacts[action.id] ?? [];
         const description = descriptions[button] ?? (menu || state.values.phase === "battle" ? `Move the menu cursor ${button.toLowerCase()} where supported.` : `Move or turn ${button.toLowerCase()} in the overworld; navigate choices during the intro.`);
         // Menu repeats can skip choices with long holds. Preserve user-configured shorter durations.
-        const confirmation = ["A", "B"].includes(button) && (menu || text || state.values.battleMenu === "moves" || state.values.battleMenu === "text_acknowledgment");
+        const confirmation = state.values.phase === "naming" && ["A", "B", "START", "SELECT"].includes(button) || ["A", "B"].includes(button) && (menu || text || this.resources?.list(state) || ["moves", "text_acknowledgment", "party"].includes(String(state.values.battleMenu)));
         const frames = Math.min(action.frames, confirmation ? 1 : 8);
         const detail = evidence.join(" ");
         const availabilityKey = [state.values.phase, state.values.mapId ?? "intro",
@@ -253,6 +270,7 @@ export class GenerationOnePokemonReader implements GameReader {
           ...(menu ? [state.values.menuKind ?? "unknown", state.values.menuCursorX, state.values.menuCursorY, state.values.enteredName ?? ""] : []),
           ...(state.values.phase === "battle" ? [this.combat?.contextKey(state) ?? "unknown", state.values.battleMenu ?? "other", state.values.battleMoveSelection ?? 0, state.values.menuCursorX, state.values.menuCursorY] : []),
           ...(this.resources?.list(state) ? [this.resources.contextKey(state), this.resources.executionState()?.selected] : []),
+          this.party?.contextKey() ?? "",
           state.values.dialogueActive === true ? `dialogue${state.values.dialogueSession ?? ""}` : ""].join(":");
         return { ...action, frames, availabilityKey,
           description: `${description}${detail ? ` Facts: ${detail.slice(0, 270)}` : ""} Press ${button} for ${frames} frames, then release for 4 frames.` };

@@ -11,6 +11,7 @@ import { startViewer } from "../src/server/viewer.js";
 import { AgentSession } from "../src/runner/agent-session.js";
 import { RequestBudget } from "../src/providers/requests.js";
 import { createStateObserver } from "../src/observation/state.js";
+import { defaultCheckpointPath, saveStateFile } from "../src/emulator/files.js";
 import type { Decision, DecisionContext } from "../src/core/agent.js";
 
 async function temporaryDirectory(): Promise<string> { return mkdtemp(join(tmpdir(), "gamer-jev-library-")); }
@@ -136,11 +137,90 @@ test("changing ROM cancels pending decisions and carries applied settings into a
     assert.deepEqual(viewer.game.agent!.copySettings(), settings);
     assert.equal(viewer.game.agent!.inspection.exchange, null);
     finish!(decision); await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(viewer.game.emulator.frameNumber, 0); assert.equal(viewer.game.agent!.snapshot.decisions, 0);
+    assert.equal(viewer.game.emulator.frameNumber, result.frame); assert.ok(result.frame >= 12);
+    assert.equal(viewer.game.agent!.snapshot.decisions, 0);
     const config = await (await fetch(`${viewer.url}/api/agent-settings`)).json();
     assert.equal(config.gameId, 1); assert.equal(config.revision, 0);
     assert.equal((await post("/api/agent-settings", { gameId: 0, revision: 0, settings })).status, 400);
   } finally { old.stop("Test finished."); await viewer.close(); viewer.game.dispose(); initial.dispose(); await cleanup(directory); }
+});
+
+test("library ROM changes restore each game's latest checkpoint and reloading preserves unsaved progress", async () => {
+  const directory = await temporaryDirectory();
+  const checkpointDirectory = join(directory, "saves");
+  const options = manual();
+  const first = createDemoRom(); const second = createDemoRom(); second[0x7fff] = 3;
+  await writeFile(join(directory, "First.gb"), first); await writeFile(join(directory, "Second.gb"), second);
+  const initial = await createGameRuntime(first, options);
+  const saved = await createGameRuntime(second, options, undefined, true);
+  saved.emulator.advance({ buttons: [], frames: 12 });
+  saved.emulator.advance({ buttons: ["RIGHT"], frames: 7 });
+  const secondFrame = saved.emulator.captureFrame();
+  await saveStateFile(saved.emulator, defaultCheckpointPath(saved.emulator, checkpointDirectory));
+  saved.dispose();
+  const viewer = await startViewer(initial.emulator, { runtime: initial, port: 0, speed: 8, paused: true,
+    checkpointPath: defaultCheckpointPath(initial.emulator, checkpointDirectory), checkpointDirectory,
+    romLibrary: new LocalRomLibrary(directory), loadRom: (rom) => createGameRuntime(rom, options, undefined, true) });
+  const post = (path: string, body: unknown) => fetch(`${viewer.url}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json", Origin: viewer.url }, body: JSON.stringify(body) });
+  try {
+    initial.emulator.advance({ buttons: [], frames: 12 }); initial.emulator.advance({ buttons: ["RIGHT"], frames: 3 });
+    const firstFrame = initial.emulator.captureFrame();
+    let result = await (await post("/api/rom", { id: "Second.gb", gameId: 0 })).json();
+    assert.equal(result.frame, secondFrame.number); assert.equal(result.paused, true); assert.equal(result.speed, 8);
+    assert.deepEqual(viewer.game.emulator.captureFrame().pixels, secondFrame.pixels);
+    assert.equal((await post("/api/step", { gameId: result.gameId })).status, 200);
+    const latestSecond = viewer.game.emulator.captureFrame();
+    result = await (await post("/api/rom", { id: "First.gb", gameId: result.gameId })).json();
+    assert.equal(result.frame, firstFrame.number); assert.equal(result.paused, true); assert.equal(result.gameReader, "demo");
+    assert.deepEqual(viewer.game.emulator.captureFrame().pixels, firstFrame.pixels);
+    const state = await (await fetch(`${viewer.url}/api/game-state`)).json();
+    assert.equal(state.state.frame, firstFrame.number); assert.equal(state.state.values.phase, "running");
+    result = await (await post("/api/rom", { id: "Second.gb", gameId: result.gameId })).json();
+    assert.equal(result.frame, latestSecond.number); assert.deepEqual(viewer.game.emulator.captureFrame().pixels, latestSecond.pixels);
+    viewer.game.emulator.advance({ buttons: ["LEFT"], frames: 4 });
+    const unsaved = viewer.game.emulator.captureFrame();
+    result = await (await post("/api/rom", { id: "Second.gb", gameId: result.gameId })).json();
+    assert.equal(result.frame, unsaved.number); assert.equal(result.paused, true);
+    assert.deepEqual(viewer.game.emulator.captureFrame().pixels, unsaved.pixels);
+    assert.equal(JSON.parse(await readFile(viewer.checkpointPath, "utf8")).frame, unsaved.number);
+  } finally { await viewer.close(); viewer.game.dispose(); initial.dispose(); await cleanup(directory); }
+});
+
+test("invalid saved checkpoints reject ROM changes without replacing the game or overwriting saves", async () => {
+  const directory = await temporaryDirectory();
+  const checkpointDirectory = join(directory, "saves");
+  const options = manual();
+  const initial = await createGameRuntime(createDemoRom(), options);
+  const bytes = createDemoRom(); bytes[0x7fff] = 5;
+  await writeFile(join(directory, "Next.gb"), bytes);
+  const saved = await createGameRuntime(bytes, options, undefined, true);
+  const target = defaultCheckpointPath(saved.emulator, checkpointDirectory);
+  saved.dispose();
+  const checkpoint = defaultCheckpointPath(initial.emulator, checkpointDirectory);
+  await saveStateFile(initial.emulator, checkpoint);
+  const previous = await readFile(checkpoint, "utf8");
+  initial.emulator.advance({ buttons: [], frames: 12 });
+  const current = initial.emulator.captureFrame();
+  await mkdir(dirname(target), { recursive: true });
+  let candidate: Awaited<ReturnType<typeof createGameRuntime>> | undefined;
+  const viewer = await startViewer(initial.emulator, { runtime: initial, port: 0, speed: 1, paused: true,
+    checkpointPath: checkpoint, checkpointDirectory, romLibrary: new LocalRomLibrary(directory),
+    async loadRom(rom) { candidate = await createGameRuntime(rom, options, undefined, true); return candidate; } });
+  try {
+    for (const invalid of ["invalid JSON", previous]) {
+      await writeFile(target, invalid);
+      const response = await fetch(`${viewer.url}/api/rom`, { method: "POST",
+        headers: { "Content-Type": "application/json", Origin: viewer.url }, body: JSON.stringify({ id: "Next.gb", gameId: 0 }) });
+      assert.equal(response.status, 400);
+      assert.equal(viewer.game.emulator, initial.emulator);
+      assert.deepEqual(initial.emulator.captureFrame(), current);
+      assert.equal((await (await fetch(`${viewer.url}/api/status`)).json()).paused, true);
+      assert.equal(await readFile(checkpoint, "utf8"), previous);
+      assert.equal(await readFile(target, "utf8"), invalid);
+      assert.throws(() => candidate!.emulator.captureFrame(), /disposed/);
+    }
+  } finally { await viewer.close(); viewer.game.dispose(); initial.dispose(); await cleanup(directory); }
 });
 
 test("a memory-only library load rejects unsupported ROMs while keeping the selected observation strategy and credentials local", async () => {

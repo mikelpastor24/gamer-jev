@@ -9,9 +9,10 @@ import { pokemonTypeNames } from "./types.js";
 import { PokemonMoveCatalog } from "./move-catalog.js";
 import { PokemonBattleFlow } from "./battle-flow.js";
 import { pokemonMoveEffect, pokemonStageSummary } from "./battle-effects.js";
+import { pokemonPartyMembers } from "./medicine.js";
 
 interface MoveChoice { readonly slot: number; readonly id: number; readonly name: string; readonly known: boolean; usable: boolean; readonly summary: string; readonly explanation: string; readonly failure?: string }
-interface BattleSnapshot extends PokemonMoveExecutionState { readonly moves: readonly MoveChoice[]; readonly stateKey: string; readonly wild: boolean }
+interface BattleSnapshot extends PokemonMoveExecutionState { readonly moves: readonly MoveChoice[]; readonly stateKey: string; readonly wild: boolean; readonly party?: boolean }
 
 const effects: Readonly<Record<number, string>> = {
   2: "may poison", 3: "drains HP", 4: "may burn", 5: "may freeze", 6: "may paralyze", 7: "user faints",
@@ -42,11 +43,12 @@ export class PokemonBattleSupport {
   reset(): void { this.catalog.reset(); this.snapshot = undefined; this.flow.reset(); }
   executionState(): PokemonMoveExecutionState | undefined { return this.snapshot; }
   escapeState(): PokemonMoveExecutionState | undefined { return this.snapshot?.wild ? this.snapshot : undefined; }
+  partyState(): PokemonMoveExecutionState | undefined { return this.snapshot?.party ? this.snapshot : undefined; }
   contextKey(state: GameState): string | undefined { return this.snapshot?.stateKey === stateKey(state.values) ? this.snapshot.context : undefined; }
 
   read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>): GameStateData {
     this.snapshot = undefined;
-    if (state.phase !== "battle" || state.battleType !== "normal") { this.flow.reset(); return { values: {}, descriptions: {} }; }
+    if (state.phase !== "battle" || state.battleType !== "normal" || state.partyMenuKind !== undefined) { this.flow.reset(); return { values: {}, descriptions: {} }; }
     this.catalog.load(memory);
     const u8 = (address: number) => ram[address - 0xc000]!;
     const player = ram.subarray(this.monLayout.battleMon - 0xc000, this.monLayout.battleMon - 0xc000 + 29);
@@ -130,8 +132,9 @@ export class PokemonBattleSupport {
     const alternatives = choices.some(move => move.known && move.usable && !move.failure);
     if (alternatives) for (const move of choices) if (move.failure) move.usable = false;
     const usableSlots = choices.filter(move => move.known && move.usable).map(move => move.slot);
+    const party = livingActors && pokemonPartyMembers(ram, this.monLayout, layout, true).some(member => member.slot !== partySlot && member.hp > 0);
     this.snapshot = { menu, selectedSlot: ready ? selected : 0, context, usableSlots, moves: choices, stateKey: stateKey({ ...state, ...values }),
-      commandX: Number(state.menuCursorX), commandY: Number(state.menuCursorY), wild: state.battleKind === "wild" && livingActors };
+      commandX: Number(state.menuCursorX), commandY: Number(state.menuCursorY), wild: state.battleKind === "wild" && livingActors, party };
     facts.push("Move types and effectiveness use this cartridge's Generation I rules. Repeated A confirms the highlighted move; it does not choose a different attack. Consider damage, PP, status effects, and the user's constraints.");
     facts.push("Base accuracy is an approximate ROM threshold, not current hit probability. Type effectiveness combines distinct enemy types; STAB applies once. Move summaries alone are not damage predictions. Eligible capture preparation may add approximate ordinary/critical HP risk; special effects and future enemy actions remain uncertain.");
     facts.push(pokemonStageSummary(playerStages, enemyStages));
@@ -157,7 +160,8 @@ export class PokemonBattleSupport {
     return [...this.snapshot!.moves.filter(move => move.known && move.usable).map(move => ({
       id: `use_move_${move.slot}`, description: `${state.decisionSupport?.actionFacts[`use_move_${move.slot}`]?.find(fact => fact.startsWith("Priority:")) ?? ""} Use slot ${move.slot}: ${move.name}. ${move.summary}. ${move.explanation} Navigate to this slot and confirm once, within 600 frames.`.trim().slice(0, 500),
       buttons: [], frames: 600, stop: false, execution: "profile" as const, availabilityKey: `${this.snapshot!.context}:slot${move.slot}`,
-    })), ...(this.snapshot!.wild ? [{ id: "run_from_wild", description: "Attempt to escape this normal wild battle. Return from the move list if necessary, select RUN and confirm once. Escape may fail; no experience or capture is gained. Useful when capture is unavailable or the party needs urgent healing. Jev chooses each escape attempt.",
+    })), ...(this.snapshot!.party ? [{ id: "open_party_menu", description: "Inspect the party to consider a switch. Return from moves if needed, select POKEMON and confirm once. Stop at the party list; Jev separately chooses a different living member by slot and confirms SWITCH if shown. Opening this menu does not switch Pokemon or guarantee a safer matchup.",
+      buttons: [], frames: 600, stop: false, execution: "profile" as const, availabilityKey: `${this.snapshot!.context}:party` }] : []), ...(this.snapshot!.wild ? [{ id: "run_from_wild", description: "Attempt to escape this normal wild battle. Return from the move list if necessary, select RUN and confirm once. Escape may fail; no experience or capture is gained. Useful when capture is unavailable or the party needs urgent healing. Jev chooses each escape attempt.",
       buttons: [], frames: 600, stop: false, execution: "profile" as const, availabilityKey: `${this.snapshot!.context}:run` }] : [])];
   }
   allows(state: GameState, button: string): boolean {

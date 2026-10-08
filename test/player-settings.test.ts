@@ -169,7 +169,7 @@ test("the player API guards stale clients and carries model choices and saved ob
     config = await get("/api/player-settings"); assert.deepEqual(config.selection, chosen);
     assert.doesNotMatch(JSON.stringify(config), /private-(typesafe|gateway)-player/);
     const changed = await (await post("/api/rom", { id: "Next.gb", gameId: applied.gameId })).json();
-    assert.equal(changed.agent, null); assert.equal(changed.frame, 0); assert.equal(changed.paused, true);
+    assert.equal(changed.agent, null); assert.equal(changed.frame, 12); assert.equal(changed.paused, true);
     config = await get("/api/player-settings"); assert.deepEqual(config.selection, chosen); assert.deepEqual(config.settings, settings);
     const agentState = await (await post("/api/player-settings", { selection: { ...chosen, mode: "agent" }, settings: null, revision: config.revision, gameId: changed.gameId })).json();
     assert.equal(agentState.agent.mode, "typesafe"); assert.equal(agentState.agent.visionProvider, "gateway"); assert.equal(agentState.agent.decisions, 0);

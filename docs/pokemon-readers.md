@@ -68,7 +68,8 @@ records follow the workflows in the [README](../README.md).
 | `lastDialogueLocation`, `lastDialogueText`, `lastDialogueStateChanged`, `lastDialogueHere`, `completedDialoguesHere` | Bounded observation memory of completed conversations, their recent text, tracked changes, and text/visits from the current position/facing |
 | `menuCursorX`, `menuCursorY`, `menuCursorRow` | Visible boxed cursor position and its row; not a claim that the game is polling input |
 | `menuKind`, `menuSelection`, `menuSelectionEffect` | Identified overworld START menu, highlighted entry, and the empty-party confirmation restriction when applicable |
-| `namingPrompt`, `enteredName` | Player/rival naming heading and current entry when the naming alphabet grid is visible |
+| `namingPrompt`, `enteredName`, `namingKind` | Player/rival/Pokemon naming heading, verified buffer and screen type when the alphabet grid is visible |
+| `partyMenuKind`, `partySelection` | Verified party list/switch/medicine context and highlighted row, independent of duplicate nicknames |
 | `playerName`, `rivalName` | Terminated, decoded names after gameplay starts |
 | `mapId`, `playerX`, `playerY`, `mapWidth`, `mapHeight`, `facing`, `movementMode` | Location and movement state; map dimensions use movement squares |
 | `locationName`, `navigationStatus`, `movementInProgress`, `controlBusy`, `stepUP/DOWN/LEFT/RIGHT` | Known location names, live movement/control timing, and walking/turning/blocked/unknown evidence |
@@ -230,8 +231,9 @@ during printing settle locally. UP/DOWN, B, wait and stop remain available;
 A is excluded on a move without PP or a disabled move. Ineffective horizontal,
 START and move-swapping SELECT inputs are excluded in this confirmed menu.
 Demonstration, Safari, move-learning/Mimic prompts and unknown screens retain
-their existing controller attempts. Party switching, items, and complete
-battle-command legality remain partial. Capture and Mart choices are described below.
+their existing controller attempts. Verified party selection, switch confirmation,
+capture, medicines and Mart choices are described below. Complete switching and
+battle-command legality remain partial.
 
 Known usable `use_move_N` choices are also offered at a verified normal FIGHT
 command screen. Their executor opens FIGHT, settles within 120 frames, validates
@@ -404,6 +406,96 @@ Cursorless quantity boxes are recognized from their RAM and displayed value;
 ordinary dialogue does not acquire quantity controls. Selecting an item never
 automatically purchases it. Selling, deposits and most other item uses retain
 generic controller choices.
+
+### Distinct names and party selection
+
+[`PokemonNamingSupport`](../src/profiles/pokemon/naming-support.ts) recognizes
+Pokemon nickname grids as well as player/rival naming. It validates the live
+buffer, length and cursor, even when the cursor crosses the alphabet's first row.
+`name_option_1..4` offer whole names, rather than asking Jev to repeatedly select
+individual letters. The executor replaces the entry with exactly the chosen name,
+confirms each key once and submits START once, within 600 frames. Changed context,
+ignored text edits or cancellation stop it without another name. A partial entry
+can be continued through another Jev-selected action. Player/rival names have a
+seven-character limit; Pokemon names have ten. Offered names use uppercase letters.
+
+Pokemon suggestions avoid case-insensitive duplicates in the known party,
+current box (at most 20 names), and up to 32 recently observed names. Reads never
+rename existing Pokemon. Unseen boxes remain unknown. Reset/restore clears private
+name memory and rereads live names; objective edits refresh suggestions.
+Add a standalone line to **Settings → Agent → Objectives**, in constraints or
+milestones, to supply a pool of preferred names:
+
+```text
+Pokemon names: EMBER, WING, LEAF, NOVA
+```
+
+Up to 16 distinct suggestions of 1-10 A-Z letters are retained, with the first
+four unused choices offered. Already reserved/invalid names are skipped;
+cartridge-heading names with bounded letter suffixes supply alternatives.
+The directive suggests choices; it does not execute naming or verify a story
+milestone. Supplied constraints remain authoritative.
+
+[`PokemonPartySupport`](../src/profiles/pokemon/party-support.ts) recognizes
+unboxed party rows using matching nickname positions, RAM menu type, cursor and
+valid member data. Slot/species/level/HP identify a member even when every nickname
+is identical. A verified normal battle party list offers `select_party_slot_N`
+for different living members, excluding the active or fainted member and generic
+A on those rows. A voluntary choice opens SWITCH/STATS/CANCEL; Jev separately
+selects `confirm_switch_to_slot_N`. Replacement/between-opponent choices can send
+the selected member directly. `open_party_menu` opens POKEMON from commands/moves
+without selecting a member. Voluntary choices explain B can cancel to retain a
+stronger active member; forced replacement asks for a living alternative. Verified
+party choices withhold ineffective waiting and obey the live B-key mask.
+A visible replacement list is not faint settling.
+Outside battle, party selection opens that member's normal menu. Reordering,
+HMs, unknown variants and full switching legality remain incomplete.
+
+### Buying and applying medicine
+
+Mart choices recommend small affordable/storable reserves of around two
+HP-restoring items and two Antidotes, considering injuries/status, existing stock
+and money needed for balls. Quantity prompts explain reserve deficits; Jev still
+chooses quantity and confirms total price separately. Sufficient stock removes
+the reserve priority. Known useful supplies also appear in shopping-purpose
+advice; a full bag can retain purchases into a known non-full existing stack.
+
+`open_medicine_bag` opens ITEM from battle commands/moves, or START → ITEM outside
+battle, and stops at the bag. `choose_medicine_slot_N` selects a known beneficial
+Antidote/Potion/Super Potion/Hyper Potion/Max Potion/Full Restore. Outside battle,
+Jev separately chooses USE in the verified USE/TOSS menu. A verified medicine
+party list offers `apply_medicine_to_slot_N` only where the selected item has a
+known benefit. Jev chooses the exact slot; the executor confirms it once and
+never substitutes a member or consumes another item automatically.
+
+Potions restore bounded missing HP; Antidotes cure poison without restoring HP.
+Full Restore additionally cures decoded nonvolatile status. These actions do not
+restore PP or revive fainted members. Matching live battle HP/status override
+lagging party data for advice. Poison/status or 30%-or-less active HP can prioritize
+medicine in battle; outside battle, status or 50%-or-less HP prioritizes a useful
+medicine already held. Centers remain relevant for fuller recovery.
+
+Medicine targeting validates the saved bag slot, stock, item-list pointer and
+item-name buffer: `wCurItem` aliases species data while drawing the party and
+cannot alone identify the treatment. Unknown item identity retains bounded
+controller attempts and a cancellation explanation. Every step stays within
+600 frames; changed inventory, party, HP/status or menu meaning ends execution
+or invalidates a delayed response. Verify inventory consumption and HP/status
+afterward; opening a menu or selecting an item is not healing.
+
+Synthetic Red/Blue/Yellow checks cover duplicate names, configured names, cursor
+movement, forced/voluntary switching, fainting, stale responses, medicine effects,
+stock/price limits, separate quantity confirmation and unknown item identity.
+An offline session selects an Antidote, USE and slot 2 separately, observing one
+consumed item and cleared poison with zero HTTP requests. This does not establish
+live Jev name choice, shopping strategy or full-game competence.
+
+A copied Red checkpoint with two Pokemon named `AAAAAAAAAA` reached a wild battle
+under explicit offline fixture inputs. The fixture selected `open_party_menu`,
+party slot 2 and the separate SWITCH confirmation, observing the active species
+change from Charmeleon (slot 1) to Pidgey (slot 2). Fourteen fixture actions used
+zero API requests and preserved the original save. This verifies slot targeting
+with duplicate names, not whether switching to that member is a good strategy.
 
 When capture balls are missing in the early region, local exit facts also
 identify directions that lead closer to Viridian/Pewter Mart using static
@@ -680,7 +772,7 @@ model's behalf.
 
 All three readers supply default objectives in
 [`objectives.ts`](../src/profiles/pokemon/objectives.ts): become League Champion,
-four constraints about exploration, preparation, capture and supplies, and 16 story
+six constraints about exploration, preparation, capture, supplies, names and medicines, and 16 story
 milestones from leaving the house through the League. Yellow's starter guidance
 describes receiving Pikachu rather than choosing a Red/Blue starter.
 These suggestions load automatically for a fresh ROM in manual or agent mode.
@@ -759,6 +851,9 @@ supplies exact cartridge and battle-menu addresses.
 `item-support.ts` supplies capture/inventory/Mart facts and choices;
 `capture-support.ts` supplies rounded ball HP plateaus, capture estimates and
 bounded ordinary/critical attack-risk advice without selecting an input;
+`naming-support.ts` and `naming-execution.ts` offer unique whole-name choices and
+type only the selected name; `party-support.ts` validates slot-based party choices
+and medicine recipients; `medicine.ts` supplies bounded member/medicine effects;
 `item-catalog.ts` caches bounded decoded names/prices, `item-layout.ts` supplies
 revision addresses, and `item-execution.ts` follows only the selected menu target.
 `preparation-support.ts` supplies team/health/challenge advice and capture stages;

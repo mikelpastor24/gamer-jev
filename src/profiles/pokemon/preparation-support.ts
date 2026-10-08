@@ -36,14 +36,27 @@ export class PokemonPreparationSupport {
   needsBalls = false;
   canStoreCapture = false;
   canBuyBalls = false;
+  needsMedicineSupplies = false;
   constructor(private readonly layout: GenerationOneLayout, readonly catalog: PokemonPreparationCatalog,
     private readonly moves: PokemonMoveCatalog, private readonly items: PokemonItemLayout) {}
   reset(): void {
     this.catalog.reset(); this.moves.reset(); this.party = []; this.notes = {}; this.healthKey = "unknown";
     this.restored = undefined; this.needsHealing = undefined; this.needsBalls = false; this.canStoreCapture = false; this.canBuyBalls = false;
-    this.wasBattling = false; this.pendingBattleCheck = false; this.postBattleReview = 0;
+    this.wasBattling = false; this.pendingBattleCheck = false; this.postBattleReview = 0; this.needsMedicineSupplies = false;
   }
   note(focus: PokemonFocus): string { return this.notes[focus] ?? ""; }
+  private bagQuantity(ram: Uint8Array, id: number): number | undefined {
+    const count = ram[this.layout.bagCount - 0xc000]!;
+    if (count > 20) return undefined;
+    let quantity = 0;
+    const seen = new Set<number>();
+    for (let slot = 0; slot < count; slot++) {
+      const item = ram[this.layout.bagItems - 0xc000 + slot * 2]!, amount = ram[this.layout.bagItems - 0xc000 + slot * 2 + 1]!;
+      if (!item || item === 255 || !amount || amount > 99 || seen.has(item)) return undefined;
+      seen.add(item); if (item === id) quantity = amount;
+    }
+    return quantity;
+  }
   canCollect(ram: Uint8Array, id: number): boolean | undefined {
     const count = ram[this.layout.bagCount - 0xc000]!;
     if (count > 20) return undefined;
@@ -65,7 +78,7 @@ export class PokemonPreparationSupport {
   read(memory: GameReaderMemory, ram: Uint8Array, state: Readonly<Record<string, StateValue>>, items?: PokemonItemCatalog, captureAvailable = false): GameStateData {
     const values: Record<string, StateValue> = {}, descriptions: Record<string, string> = {}, facts: string[] = [], actionFacts: Record<string, string[]> = {};
     this.notes = {}; this.party = []; this.healthKey = "unknown"; this.restored = undefined; this.needsHealing = undefined;
-    this.needsBalls = false; this.canStoreCapture = false; this.canBuyBalls = false;
+    this.needsBalls = false; this.canStoreCapture = false; this.canBuyBalls = false; this.needsMedicineSupplies = false;
     const battling = state.battleKind === "wild" || state.battleKind === "trainer" || state.phase === "battle";
     if (this.wasBattling && !battling) this.pendingBattleCheck = true;
     this.wasBattling = battling;
@@ -155,7 +168,14 @@ export class PokemonPreparationSupport {
     this.canBuyBalls = price !== undefined && Number.isFinite(money) && money >= price &&
       (Number(state.bagCount) < 20 || Array.from({ length: Math.min(Number(state.bagCount) || 0, 20) }, (_, slot) => ram[this.layout.bagItems - 0xc000 + slot * 2] === 4 && ram[this.layout.bagItems - 0xc000 + slot * 2 + 1]! < 99).some(Boolean));
     const supplies = this.needsBalls ? `No capture balls. ${price ? `A Poke Ball costs ${price}; money=${Number.isFinite(money) ? money : "unknown"}, affordable quantity up to ${Number.isFinite(money) ? Math.min(99, Math.floor(money / price)) : "unknown"}.` : "Ball price/affordability unknown."} Buy supplies at a Mart before seeking ordinary captures.` : `${Number.isFinite(balls) ? balls : "Unknown"} capture ball(s); throwing a ball is a separate battle choice.`;
-    this.notes.shop = supplies;
+    const potions = [0x10, 0x11, 0x12, 0x13, 0x14].map(id => this.bagQuantity(ram, id));
+    const hpStock = potions.every(quantity => quantity !== undefined) ? potions.reduce<number>((sum, amount) => sum + amount!, 0) : undefined;
+    const antidotes = this.bagQuantity(ram, 0x0b);
+    this.needsMedicineSupplies = (hpStock !== undefined && hpStock < 2 || antidotes !== undefined && antidotes < 2) &&
+      [0x14, 0x0b].some(id => items?.price(id) !== undefined && Number.isFinite(money) && money >= items.price(id)! &&
+        (Number(state.bagCount) < 20 || (this.bagQuantity(ram, id) ?? 99) < 99));
+    const medicineSupplies = `Medicine reserve: ${hpStock ?? "unknown"} HP-restoring items, ${antidotes ?? "unknown"} Antidotes. Consider a small reserve of two each when affordable/storable. Potions restore HP; Antidotes cure poison. Preserve funds for required balls; buying medicine does not heal until a selected item is applied to a selected party slot.`;
+    this.notes.shop = `${this.needsMedicineSupplies ? "Priority: consider missing medicine reserves. " : ""}${medicineSupplies} ${supplies}`.slice(0, 500);
     this.notes.catch = `Priority: attempt every eligible wild species absent from the current team. ${count < 2 ? "Only one party member: a useful backup is recommended." : "New types are useful, but are not required to attempt a new team species."} ${supplies}`.slice(0, 350);
     if (!battling && this.needsBalls && this.canBuyBalls && this.canStoreCapture) facts.unshift("Priority: capture supplies are missing. Before seeking more wild encounters, choose capture/shopping preparation and buy affordable balls. Then attempt every eligible wild species absent from the current party, including species already owned in the Pokedex. Each purchase and ball still requires a separate Jev choice.");
     if (!battling) facts.push(`Team preparation: ${count} member(s). ${this.notes.catch} Capture purpose can include buying balls first; neither entering grass nor selecting a ball verifies a capture.`.slice(0, 500));

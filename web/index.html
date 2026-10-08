@@ -118,9 +118,9 @@
         <form id="rom-library-form">
           <div class="rom-choice"><div class="setting-heading"><label for="rom-choice" data-help="Choose a local .gb or .gbc file from the roms/ folder. Selection alone does not switch games; use Load selected ROM. Reader compatibility is checked against the exact ROM hash.">ROM</label></div><select id="rom-choice" disabled><option value="">Loading library…</option></select></div>
           <p id="rom-library-summary" class="settings-hint" role="status">Game Boy cartridges in roms/ are available here.</p>
-          <div class="setting-action"><button id="load-rom" class="primary" type="submit" disabled data-help="Save the current game's checkpoint, then load the selected cartridge paused. Applied agent settings and providers are kept; counters, elapsed time, history, and inspection start fresh.">Load selected ROM</button></div>
+          <div class="setting-action"><button id="load-rom" class="primary" type="submit" disabled data-help="Save the current game's checkpoint, then load the selected cartridge paused, automatically restoring its latest checkpoint when available. Applied agent settings and providers are kept; counters, elapsed time, history, and inspection start fresh.">Load selected ROM</button></div>
         </form>
-        <p class="settings-hint">Loading saves a checkpoint of the current game and starts the selected cartridge paused. Use Resume to play, or Restore checkpoint to continue a saved game.</p>
+        <p class="settings-hint">Loading saves the current game and automatically restores the selected game's latest checkpoint, if available. The game stays paused until you press Resume.</p>
         <p class="settings-hint" data-agent-only hidden>Applied objectives, constraints, providers, and limits are kept. Each loaded game starts a new agent session with fresh counters and history.</p>
       </section>
       <section id="settings-agent" class="settings-body" role="tabpanel" aria-labelledby="agent-tab" hidden>

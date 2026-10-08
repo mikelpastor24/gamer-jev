@@ -431,12 +431,14 @@ export class GenerationOneDecisionSupport {
     const encounters = this.planningActive && (!this.focus.current || this.focus.current === "train" || this.focus.current === "catch" && !captureSupplies) && encounterMaps.length ?
       this.graph.encounterGuidance(Number(state.mapId), player, encounterMaps, romByte, layout, memory.romByteLength ?? 0) : undefined;
     const knownEncounters = grassTargets.length > 0 || encounters?.here !== undefined;
-    if (this.focus.needsChoice) this.focusOptions = ["progress", "explore", ...(shopping?.here !== undefined && Number(state.money) > 0 && Number(state.bagCount) < 20 ? ["shop" as const] : []),
+    if (this.focus.needsChoice) this.focusOptions = ["progress", "explore", ...(shopping?.here !== undefined && Number(state.money) > 0 &&
+      (Number(state.bagCount) < 20 || this.preparation?.needsMedicineSupplies || this.preparation?.canBuyBalls) ? ["shop" as const] : []),
       ...(healing?.here !== undefined && this.preparation?.restored !== true ? ["heal" as const] : []), ...(knownEncounters ? ["train" as const] : []),
       ...(knownEncounters && (this.preparation ? this.preparation.canStoreCapture && (Number(state.pokeBalls) > 0 || shopping?.here !== undefined && this.preparation.canBuyBalls) : Number(state.pokeBalls) > 0) ? ["catch" as const] : [])];
     else this.focusOptions = healing?.here !== undefined && this.preparation?.restored !== true ? ["heal"] : [];
     this.focusOptions = [...this.focusOptions].sort((a, b) => {
-      const rank = (focus: PokemonFocus) => this.preparation?.needsHealing && focus === "heal" ? 0 : focus === "catch" ? 1 : focus === "shop" ? 2 : 3;
+      const rank = (focus: PokemonFocus) => this.preparation?.needsHealing && focus === "heal" ? 0 :
+        this.preparation?.needsMedicineSupplies && focus === "shop" ? 1 : focus === "catch" ? 1 : focus === "shop" ? 2 : 3;
       return rank(a) - rank(b);
     });
     const focusGuidance = this.focus.current === "shop" || captureSupplies ? shopping : this.focus.current === "heal" ? healing : this.focus.current === "progress" ? regional :

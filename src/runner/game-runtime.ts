@@ -7,7 +7,7 @@ import type { DiagnosticSink } from "../core/diagnostics.js";
 import type { CliOptions } from "../config/cli-options.js";
 import { loadObjectives, parseObjectives } from "../config/objectives.js";
 import { createDefaultRegistry } from "../emulator/registry.js";
-import { loadStateFile } from "../emulator/files.js";
+import { defaultCheckpointPath, loadCheckpointIfPresent, loadStateFile } from "../emulator/files.js";
 import { createDefaultGameReaderRegistry } from "../profiles/default-registry.js";
 import { bindGameReader } from "../profiles/registry.js";
 import type { GameReaderRegistry } from "../profiles/registry.js";
@@ -43,6 +43,8 @@ export interface PlayerControl {
 }
 
 export interface RuntimeProviders {
+  /** Resume interactive startup before creating readers and agent sessions. */
+  readonly resumeCheckpoint?: boolean;
   readonly selection?: PlayerSelection;
   readonly environment?: ProviderEnvironment;
   readonly fetch?: typeof globalThis.fetch;
@@ -72,7 +74,12 @@ export async function createGameRuntime(rom: Uint8Array, options: CliOptions,
     disposed = true; agent?.stop("Session closed."); log?.close(); emulator.dispose();
   };
   try {
-    if (!switching && options.loadPath) await loadStateFile(emulator, options.loadPath);
+    if (!switching) {
+      if (options.loadPath) await loadStateFile(emulator, options.loadPath);
+      else if (providerOptions.resumeCheckpoint && !options.headless) {
+        await loadCheckpointIfPresent(emulator, options.savePath ?? defaultCheckpointPath(emulator));
+      }
+    }
     const environment = { ...(providerOptions.environment ?? process.env) };
     const secrets = [environment.TYPESAFE_API_KEY, environment.AI_GATEWAY_API_KEY].filter((value): value is string => Boolean(value));
     const safe = <T>(value: T): T => redactLogEvent(value, secrets) as T;

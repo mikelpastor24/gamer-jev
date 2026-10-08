@@ -181,6 +181,16 @@ plateaus near 33% for Poke/Ultra Balls and 50% for Great Balls, with exact integ
 rounding. Jev switches to balls at a plateau or earlier when further damage risks
 a KO or cannot be estimated cautiously. The reader supplies per-ball capture
 estimates and per-move HP risk; each attack and throw still requires Jev's choice.
+Verified party lists identify Pokemon by slot, species and HP even when nicknames
+repeat, and offer explicit switching choices. Naming screens offer complete unique
+names; add a standalone `Pokemon names: EMBER, WING, LEAF` line to objective
+constraints or milestones to suggest names. Jev selects the name to type.
+Mart advice includes small affordable Potion/Antidote reserves. Jev can open the
+bag, choose a suitable medicine and select its party recipient during or after
+battle; USE, purchase quantity and price confirmations remain separate choices.
+Antidotes cure poison; Potions restore HP. Neither restores PP or revives fainted
+members. Existing edited objectives are preserved; **Use game defaults** reloads
+the updated suggestions in Settings.
 An immediate reader-owned decision task distinguishes the current battle from
 future preparation. Known exhausted stat effects and ordinary type immunity are
 withheld when another known usable move exists; Jev can select a move directly
@@ -456,9 +466,11 @@ instruction to add your own ROMs. Color-only ROMs remain unsupported; the
 emulator validates the selected cartridge before replacing the current game.
 
 Loading pauses the current session, cancels pending model work, and saves its
-checkpoint. The new game starts from boot, paused, with the matching reader
-selected by exact hash. Press **Resume** to start, or **Settings → Session →
-Restore checkpoint** to continue a previous save for that ROM. Loading never
+checkpoint. The selected game automatically restores its latest compatible
+checkpoint, or starts from boot if none exists. It stays paused, with the matching
+reader selected by exact hash; press **Resume** to play. Reloading the current
+ROM preserves its current progress, including the checkpoint saved by that load.
+Loading never
 makes model requests. Speed, custom objectives, constraints, milestones,
 providers, action duration, and ceilings carry over. Untouched reader objectives
 refresh from the new game's suggestions. Decision and
@@ -469,7 +481,9 @@ Memory-only agent sessions reject cartridges without a compatible reader.
 Checkpoints after a ROM change use
 `saves/<console>/<rom-sha256>/checkpoint.json`, independently for each ROM.
 An explicit startup `--save` path applies to the initial game. The previous
-game stays loaded and paused if validation or checkpoint saving fails.
+game stays loaded and paused if cartridge validation, checkpoint restoration,
+or checkpoint saving fails. Invalid checkpoints remain unchanged and are reported
+as errors rather than silently starting a new game.
 Library loading also works after an agent reaches a session limit; the new
 session uses the currently applied limits. Start the viewer with `npm run demo`
 for manual play, or with your existing agent command, then choose a ROM here.
@@ -535,10 +549,12 @@ play it through the system speakers.
 
 **Press Ctrl+C to stop.** The viewer saves a checkpoint under
 `saves/game-boy/<rom-sha256>/checkpoint.json` before exiting. The save button
-writes to the same path. Restore pauses the session so you can inspect it
-before resuming. Starting the same ROM does not load a checkpoint automatically.
+writes to the same path. Loading that ROM in the viewer, including at startup,
+automatically restores this latest checkpoint when it exists. **Restore checkpoint**
+also lets you return to the last save during play and pauses the session.
 
-Choose your own checkpoint path and resume it explicitly:
+Choose your own checkpoint path; interactive startup automatically resumes it
+when present. An explicit `--load` takes precedence if supplied:
 
 ```sh
 npm start -- --rom "roms/my-game.gb" --save "saves/my-session.json"
@@ -564,7 +580,8 @@ Frames in a headless run execute as fast as possible. `--buttons RIGHT,A` holds
 those buttons throughout that run; an empty button list waits. Buttons are
 released at every action boundary, including failures. A session is bounded
 by `--frames`; Ctrl+C interrupts between small batches. Headless checkpoints
-are written when `--save` is supplied.
+are written when `--save` is supplied. Headless runs start fresh unless `--load`
+is supplied; they do not automatically resume existing checkpoints.
 
 ```sh
 npm start -- --help
@@ -661,8 +678,9 @@ registration, JSON schema, validation, and examples.
   PP, STAB and type effectiveness. Jev can select an explicit usable move slot;
   its executor navigates and confirms only that choice. Metadata was checked
   locally for all three, and slot 2 execution was checked in a Red combat replay.
-  Status/special rules are distinguished; full damage prediction and party/item
-  battle commands remain incomplete. See [Pokémon readers](docs/pokemon-readers.md).
+  Status/special rules are distinguished. Slot-based party choices and ordinary
+  medicines are supported in verified menus; full damage prediction and complete
+  party/item battle legality remain incomplete. See [Pokémon readers](docs/pokemon-readers.md).
   The demo's new readiness flag changes its hash; older demo checkpoints must
   be replaced. Reader compatibility is checked against exact ROM hashes.
 

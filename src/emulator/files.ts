@@ -1,11 +1,26 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import type { Emulator, Frame } from "../core/emulator.js";
 
 export async function loadStateFile(emulator: Emulator, path: string): Promise<void> {
   if ((await stat(path)).size > 32 * 1024 * 1024) throw new Error("State files must be smaller than 32 MiB.");
   emulator.restoreState(JSON.parse(await readFile(path, "utf8")) as unknown);
+}
+
+export function defaultCheckpointPath(emulator: Emulator, directory = "saves"): string {
+  return join(directory, emulator.descriptor.consoleId, emulator.rom.sha256, "checkpoint.json");
+}
+
+/** Only a missing checkpoint permits a fresh start; invalid saves remain errors. */
+export async function loadCheckpointIfPresent(emulator: Emulator, path: string): Promise<boolean> {
+  try {
+    await loadStateFile(emulator, path);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 export async function saveStateFile(emulator: Emulator, path: string): Promise<void> {

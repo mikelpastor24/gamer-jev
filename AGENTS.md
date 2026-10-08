@@ -352,6 +352,51 @@ Scratch HP-risk advice and a rounded 7/15 Poke Ball plateau using one hypothetic
 ball, with no inventory edits, frames, APIs or original save writes. This verifies
 metadata-backed advice, not capture success or live Jev strategy.
 
+`PokemonNamingSupport` and `PokemonPartySupport` keep names separate from slot
+identity. Recognize player/rival and Pokemon grids with validated buffer/length/
+cursor; cursor markers between letters must not hide the alphabet. Offer at most
+four whole-name actions, each typing only Jev's selected A-Z name with single-frame
+keys and one START, bounded to 600 frames. Keep player/rival names within seven
+characters and Pokemon within ten. A standalone `Pokemon names: EMBER, WING`
+constraint or milestone supplies up to 16 preferred names. Avoid case-insensitive
+duplicates in live party/current-box names and up to 32 recently observed names;
+unseen boxes remain unknown. Reads never rename existing members; reset/restore
+clears private memory and objective edits refresh suggestions.
+Verified unboxed party rows expose slot/species/level/HP and their real cursor
+even with identical nicknames. Normal battle selection excludes active/fainted
+members and A on those highlights. Jev separately confirms SWITCH for a voluntary
+selection; forced/between-opponent choices may send the selected member directly.
+`open_party_menu` opens only POKEMON; choosing a member remains separate. Voluntary
+switching explains cancellation may retain a stronger member. Withhold ineffective
+waits in verified party/name choices and obey the live party B-key mask.
+Visible party input must not be treated as neutral faint settling. Unknown
+variants, reordering, field moves and complete switching legality remain partial.
+
+Medicine advice recommends small affordable/storable reserves of two HP-restoring
+items and two Antidotes, preserving money needed for balls. Jev chooses each item,
+quantity and total-price confirmation. Stock removes reserve priority. Shared
+profile-local `medicine.ts` distinguishes ordinary Potion variants/Full Restore
+from Antidote and matches live battle HP/status to the active party slot.
+`open_medicine_bag` opens battle ITEM or field START/ITEM and stops at the bag;
+`choose_medicine_slot_N` selects a known useful medicine. Field USE is another
+Jev choice. A verified medicine party list offers beneficial
+`apply_medicine_to_slot_N` choices with one confirmation, no alternate target and
+a 600-frame ceiling. Verify the saved bag slot, stock, list pointer and item-name
+buffer: current-item RAM aliases species data during party drawing. Unknown
+medicine identity retains bounded attempts and explains cancellation. Poison/
+status or active HP <=30% can prioritize battle medicine; outside battle, status
+or HP <=50% prioritizes known beneficial inventory. Potions do not cure poison,
+Antidotes do not restore HP, and these medicines do not restore PP or revive.
+Centers remain relevant. Reset/restore and changed item/party/menu meaning
+invalidate execution; never auto-use or retry. Defaults now have six constraints
+and preserve the exact 16 milestones. Synthetic checks cover all three readers
+and a three-decision offline Antidote/USE/slot session with zero HTTP attempts;
+live Jev strategy remains unverified. A copied Red checkpoint with duplicate
+`AAAAAAAAAA` names verified opening POKEMON, selecting slot 2 and separately
+confirming SWITCH: the active species changed from Charmeleon to Pidgey after
+14 fixture actions, zero API requests and no original save writes. This proves
+targeting rather than the usefulness of that switch.
+
 Agent session JSONL records include local diagnostics for readers, decisions,
 response validation, and HTTP attempts. `--debug` prints them and also enables
 manual-session records. Redact credentials, exclude raw provider response bodies,
@@ -413,6 +458,14 @@ session ceilings, and provider choices; refresh unchanged reader suggestions.
 Reset session counters, timers, history, and inspection.
 `src/runner/game-runtime.ts` owns per-cartridge readers, providers, logs, and
 cleanup. Checkpoints after switching are isolated by console and ROM hash.
+Interactive startup and library loads automatically restore the latest compatible
+checkpoint for that game when present; absent saves start from boot. Startup uses
+`--save` when supplied and explicit `--load` takes precedence. Headless execution
+resumes only with explicit `--load`. Validate restored reader state before replacing
+the current game, invalidate reader caches, and retain the current paused cartridge
+and both saves on restoration failure. Reloading the current ROM uses the current
+snapshot that is saved by the load, preserving unsaved progress. Library loads
+remain paused and never request model decisions during restoration.
 Guard browser commands and inspection against stale game IDs. Never expose
 ROM bytes, absolute catalog paths, or provider credentials through the library.
 

@@ -41,7 +41,7 @@ export function createRomLibrary({ request, onLoad, message }) {
     try {
       const status = await request("/api/rom", { id: select.value });
       onLoad(status);
-      message("ROM loaded. The previous game was saved. Resume when ready, or restore this game's checkpoint.");
+      message("ROM loaded. Saved progress is restored automatically when available. Resume when ready.");
     } catch (error) { message(error.message, true); }
     finally { loading = false; select.disabled = !enabled || !select.value; load.disabled = select.disabled; load.textContent = "Load selected ROM"; }
   });

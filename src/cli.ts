@@ -1,10 +1,9 @@
 import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { CLI_HELP, parseCliOptions } from "./config/cli-options.js";
 import { createDemoRom } from "./demo/rom.js";
-import { saveScreenshot, saveStateFile } from "./emulator/files.js";
+import { defaultCheckpointPath, saveScreenshot, saveStateFile } from "./emulator/files.js";
 import { createDefaultRegistry } from "./emulator/registry.js";
 import { createDefaultGameReaderRegistry } from "./profiles/default-registry.js";
 import { runHeadless } from "./runner/headless.js";
@@ -28,7 +27,7 @@ async function main(): Promise<void> {
   const rom = options.demo ? createDemoRom() : await readFile(options.romPath!);
   if (existsSync(".env")) loadEnvFile(".env");
   const environment = { ...process.env };
-  let runtime = await createGameRuntime(rom, options);
+  let runtime = await createGameRuntime(rom, options, undefined, false, { resumeCheckpoint: true });
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.once("SIGINT", interrupt);
@@ -57,7 +56,7 @@ async function main(): Promise<void> {
         if (session.snapshot.state === "error") process.exitCode = 1;
       }
     } else {
-      const checkpointPath = options.savePath ?? join("saves", emulator.descriptor.consoleId, emulator.rom.sha256, "checkpoint.json");
+      const checkpointPath = options.savePath ?? defaultCheckpointPath(emulator);
       const viewer = await startViewer(emulator, {
         port: options.port, speed: options.speed, paused: options.paused, checkpointPath, runtime, launcher: options.launcher,
         gameState: runtime.gameState, dispose: runtime.dispose,

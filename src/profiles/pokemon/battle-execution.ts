@@ -9,6 +9,27 @@ export interface PokemonMoveExecutionState {
   readonly commandY?: number;
 }
 
+/** Open only Jev's selected POKEMON command; choosing a member is another decision. */
+export function pokemonPartyMenuExecution(read: () => { readonly partyOpen: boolean; readonly battle?: PokemonMoveExecutionState | undefined }): GameActionExecution {
+  const initial = read().battle;
+  if (!initial || !["command", "moves"].includes(initial.menu)) throw new Error("The selected party menu is no longer available.");
+  let frames = 0, release = 0, waiting = 0, confirmed = false;
+  return { next() {
+    if (++frames > 600) return { done: true, reason: "Party opening reached its frame ceiling." };
+    const { partyOpen, battle } = read();
+    if (partyOpen) return { done: true, reason: "Battle party menu opened; Jev chooses a member separately." };
+    if (!battle || battle.context !== initial.context) return { done: true, reason: "Party opening battle context changed." };
+    if (confirmed || !["command", "moves"].includes(battle.menu)) {
+      if (++waiting > 120) return { done: true, reason: "Party command did not settle within its ceiling." };
+      return { done: false, buttons: [] };
+    }
+    if (release) { release--; return { done: false, buttons: [] }; }
+    const button = battle.menu === "moves" ? "B" : battle.commandX !== 15 ? "RIGHT" : battle.commandY !== 14 ? "UP" : "A";
+    confirmed = button === "A"; release = 6;
+    return { done: false, buttons: [button] };
+  } };
+}
+
 /** Move only to the slot chosen by Jev, then send one confirmation pulse. */
 export function pokemonMoveExecution(slot: number, read: () => PokemonMoveExecutionState | undefined, pulseFrames: number): GameActionExecution {
   const initial = read();

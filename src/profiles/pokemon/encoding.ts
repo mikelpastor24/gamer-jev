@@ -75,7 +75,8 @@ export function readTextScreen(tiles: Uint8Array): TextScreen {
   // The alphabet grid identifies a naming screen. Only then decode its unboxed heading and entry.
   const rawRow = (y: number) => Array.from(tiles.subarray(y * width, (y + 1) * width), (tile) => decodeCharacter(tile) ?? " ").join("").trim();
   const namingPrompt = rawRow(1);
-  const naming = rows.some((row) => row.toUpperCase().includes("A B C D E F G H I")) && /^(YOUR|RIVAL's) NAME\??$/.test(namingPrompt);
+  const naming = rows.some((row) => row.toUpperCase().replaceAll(">", " ").includes("A B C D E F G H I")) &&
+    (/^(YOUR|RIVAL's) NAME\??$/.test(namingPrompt) || rawRow(3).startsWith("NICKNAME?"));
   return { top: bounded(rows.slice(0, 9)), bottom: bounded(rows.slice(9)), hasBox, dialogueBox,
     ...(cursorIndex < 0 ? {} : { cursor: { x: cursorIndex % width, y: Math.floor(cursorIndex / width), row: rows[Math.floor(cursorIndex / width)]! } }),
     ...(naming ? { naming: { prompt: namingPrompt, name: rawRow(2) } } : {}),
