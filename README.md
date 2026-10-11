@@ -12,6 +12,19 @@ console and ROM hash. Jev can use direct TypeSafe or Vercel AI Gateway; vision
 is configured independently. Manual and fully mocked sessions need no credentials.
 Gameplay competence still needs validation with real games.
 
+## Jev in action
+
+See Jev playing Pokémon Red in the local viewer, alongside its selected actions
+and the observed game state. [Watch the full gameplay videos on mikelpastor.com](https://mikelpastor.com/).
+
+**Starting Pokémon Red**
+
+![Jev starting Pokémon Red, with the TypeSafe agent overview, game state, and available actions visible in the viewer.](assets/jev-starts-playing-pokemon-red.jpg)
+
+**Inside the first Gym**
+
+![Jev inside Pokémon Red's first Gym, with a selected interaction and the agent's decision details visible beside the game.](assets/jev-beats-pokemon-red-first-gym.jpg)
+
 ## Requirements
 
 - Node.js 22.18 or newer and npm.
