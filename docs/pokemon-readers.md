@@ -56,7 +56,7 @@ Use `--profile pokemon-red-en`, `--profile pokemon-blue-en`, or
 rejected even for Red and Blue, which share RAM addresses. Use `--list-profiles`
 to list readers, and `--load <checkpoint>` to resume a compatible local checkpoint.
 Pause or stop from the viewer; Ctrl+C stops the process. Agent limits and
-records follow the workflows in the [README](../README.md).
+records follow the workflows in [Agent sessions](agent-sessions.md#objectives-and-limits).
 
 ## What Jev receives
 
