@@ -142,5 +142,56 @@ state-only and vision-assisted observation paths. Provider tests cover all nine
 decision/vision combinations, separate credentials, native confidence and token
 usage, cancellation, overload retries, and malformed responses.
 They require no commercial ROM, network API, credentials, or paid model calls.
-The compiled CLI reads the static viewer from `web/`; keep that directory
-alongside `dist/` when moving a build.
+The compiled CLI reads the static viewer from `web/` and the application version
+from `package.json`; keep both alongside `dist/` when moving a build.
+
+## Releases
+
+[semantic-release](https://semantic-release.org/) creates version tags and
+GitHub Releases with generated release notes after a push to `main` passes
+`npm run check` on both Linux and Windows. Pull requests and other branches
+run the checks without publishing. Release jobs run one at a time.
+
+Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
+for commits that reach `main`:
+
+| Commit | Version change |
+| --- | --- |
+| `fix: correct checkpoint restoration` or `perf: reduce frame overhead` | Patch |
+| `feat: add another console adapter` | Minor |
+| `feat!: change the checkpoint format` or a `BREAKING CHANGE:` footer | Major |
+| `docs:`, `test:`, `chore:`, or `ci:` without a breaking change | No release |
+
+The highest applicable change since the previous version tag determines the
+next version. When squash-merging, use a Conventional Commit message for the
+resulting commit; include any breaking-change footer in its body.
+
+With no existing version tags, the first releasable history produces `v1.0.0`.
+Subsequent tags use `vX.Y.Z`. Before tagging, the npm plugin updates the version
+in `package.json` and `package-lock.json` without publishing to npm. The git
+plugin commits only these two files as `chore(release): X.Y.Z [skip ci]` and
+pushes that commit to `main`. The tag points to the release commit, so a checkout
+of the tag contains matching package and lockfile versions. Release notes live
+in GitHub Releases rather than a generated repository changelog.
+
+The workflow uses GitHub Actions' automatic `GITHUB_TOKEN` with `contents: write`;
+no npm token is required. Repository or organization rules must allow that token
+to push the release commit directly to `main` and create version tags and
+releases. If branch protection blocks that push, configure authorized GitHub App
+authentication for both checkout and semantic-release; the automatic token cannot
+bypass protected-branch rules. See the
+[GitHub Actions authentication guidance](https://semantic-release.org/recipes/ci-configurations/github-actions/#pushing-packagejson-changes-to-your-repository).
+The release plugins do not create issue comments, pull request comments, or labels.
+
+To preview a release locally with a GitHub token authorized for the repository:
+
+```sh
+npm run release:dry-run
+```
+
+A dry run reads Git history and checks GitHub authentication and Git push
+permission, then prints the proposed version and release notes without changing
+the manifests or creating a commit, tag, or release. It requires network access.
+See the
+[semantic-release configuration reference](https://semantic-release.org/usage/configuration/)
+for details.

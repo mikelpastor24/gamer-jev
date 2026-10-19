@@ -5,7 +5,8 @@ body { margin: 0; color: var(--ink); background: var(--paper); }
 main { height: 100dvh; max-width: 1800px; margin: 0 auto; padding: 20px 24px 12px; display: flex; flex-direction: column; gap: 14px; }
 .app-header { display: flex; align-items: center; gap: 24px; flex: 0 0 auto; min-height: 52px; }
 .brand { flex-shrink: 0; color: var(--ink); text-decoration: none; font-weight: 750; font-size: 23px; letter-spacing: -1px; }
-.brand span { display: block; margin-top: 3px; font-size: 9px; letter-spacing: 2px; font-weight: 500; color: var(--muted); }
+.brand-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 9px; letter-spacing: 2px; font-weight: 500; color: var(--muted); }
+#app-version { font-size: 10px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .cartridge { min-width: 0; flex: 1; border-left: 1px solid var(--line); padding-left: 24px; }
 h1 { font-weight: 650; font-size: 19px; margin: 0 0 4px; letter-spacing: -0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cartridge p { margin: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -185,7 +186,7 @@ button.settings-help:hover, button.settings-help:focus-visible { color: var(--gr
   main { height: 100dvh; padding: 12px; gap: 10px; }
   .app-header { gap: 12px; }
   .brand { font-size: 20px; }
-  .brand span { display: none; }
+  .brand-tagline { display: none; }
   .cartridge { padding-left: 12px; }
   .cartridge p { display: none; }
   h1 { font-size: 15px; }

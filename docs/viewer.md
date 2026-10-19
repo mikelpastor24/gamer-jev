@@ -24,6 +24,8 @@ a card. Pause/resume and the camera button for PNG screenshots stay beside the
 game; sound, checkpoints, frame stepping, and reset live in **Settings → Session**. Controller buttons
 are shown by default for manual play and hidden by default for agent sessions.
 Narrow or short windows switch to section tabs.
+The header shows the current application version below **Gamer Jev**, including
+in compact layouts.
 Cards paginate long content instead of adding scroll areas. Click a state field,
 action, objective, or stop reason to read its full details; action cards only
 inspect a choice and never execute it. **Fields** lets you hide individual state

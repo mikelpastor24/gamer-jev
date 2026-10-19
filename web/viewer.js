@@ -94,6 +94,9 @@ function renderStatus(status) {
     canvas.height = status.descriptor.screen.height;
     document.querySelector("#game-title").textContent = status.rom.title;
     document.querySelector("#game-title").title = status.rom.title;
+    const version = document.querySelector("#app-version");
+    version.textContent = `v${status.appVersion}`;
+    version.hidden = false;
     document.querySelector("#console-name").textContent = status.descriptor.name;
     document.querySelector("#resolution").textContent = `${canvas.width} × ${canvas.height}`;
     document.querySelector("#controller").replaceChildren();

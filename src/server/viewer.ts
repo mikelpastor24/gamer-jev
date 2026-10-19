@@ -42,7 +42,7 @@ export interface Viewer {
 export async function startViewer(emulator: Emulator, options: ViewerOptions): Promise<Viewer> {
   let speed = parseEmulationSpeed(options.speed);
   const autosave = new CheckpointAutosave(options.autosave);
-  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript, settingsHelpJavascript, autosaveJavascript] = await Promise.all([
+  const [html, css, javascript, audioJavascript, inspectorJavascript, agentSettingsJavascript, romLibraryJavascript, settingsHelpJavascript, autosaveJavascript, packageJson] = await Promise.all([
     readFile(new URL("../../web/index.html", import.meta.url)),
     readFile(new URL("../../web/style.css", import.meta.url)),
     readFile(new URL("../../web/viewer.js", import.meta.url)),
@@ -52,7 +52,10 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
     readFile(new URL("../../web/rom-library.js", import.meta.url)),
     readFile(new URL("../../web/settings-help.js", import.meta.url)),
     readFile(new URL("../../web/autosave.js", import.meta.url)),
+    readFile(new URL("../../package.json", import.meta.url)),
   ]);
+  const appVersion: unknown = JSON.parse(packageJson.toString("utf8")).version;
+  if (typeof appVersion !== "string" || !appVersion || appVersion.length > 128) throw new Error("Invalid application package version.");
   let paused = options.paused;
   let buttons: string[] = [];
   let inputAt = 0;
@@ -84,6 +87,7 @@ export async function startViewer(emulator: Emulator, options: ViewerOptions): P
   const pause = () => { paused = true; agent?.pause(); buttons = []; audioEpoch++; discardAudio(); };
   const audioPaused = () => paused || (agent !== undefined && !agent.advancing);
   const status = () => ({
+    appVersion,
     descriptor: emulator.descriptor,
     rom: emulator.rom,
     frame: emulator.frameNumber,
