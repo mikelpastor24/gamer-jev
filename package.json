@@ -1,6 +1,6 @@
 {
   "name": "gamer-jev",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Game-agnostic emulated gameplay with TypeSafe AI's Jev, game-reader strategies, and optional vision.",
   "type": "module",
